@@ -64,6 +64,10 @@ jobs:
           MAN=build/android/app/src/main/AndroidManifest.xml
           grep -q USE_BIOMETRIC "$MAN" || sed -i 's#</manifest>#    <uses-permission android:name="android.permission.USE_BIOMETRIC" />\n</manifest>#' "$MAN"
           grep -n "USE_BIOMETRIC" "$MAN"
+          # keyboard/focus fix after fingerprint + resize when keyboard opens
+          cp android-patch/MainActivity.java build/android/app/src/main/java/com/roni/hisab/MainActivity.java
+          grep -q windowSoftInputMode "$MAN" || sed -i 's#android:name=".MainActivity"#android:name=".MainActivity"\n            android:windowSoftInputMode="adjustResize"#' "$MAN"
+          grep -n "windowSoftInputMode" "$MAN" || { echo "::error::windowSoftInputMode not set"; exit 1; }
           grep -n "NativeBiometric\|native-biometric" build/android/capacitor.settings.gradle || { echo "::error::biometric plugin not linked"; exit 1; }
 
       - name: Build APK
