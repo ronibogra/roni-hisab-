@@ -1,0 +1,13 @@
+- name: Android APK builder
+  # You may pin to the exact commit or the version.
+  # uses: kevingopalan/action_android_build@48f8ff1d1aeb7cbe91406123fe25b7ff32bef57f
+  uses: kevingopalan/action_android_build@v1
+  with:
+    # Github secret token to allow automated publishing of APK to release.
+    GITHUB_TOKEN: # optional
+    # CI token
+    CI_TOKEN: # optional
+    # App Name
+    APP_NAME: # optional
+    # Package Type
+    TYPEPACKAGE: # optional
