@@ -69,11 +69,11 @@ jobs:
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
           echo "build-tools: $BT"
           P=$(printf '%s' "$KS_PASS" | tr -d ' \r\n\t')
+          export P
           if [ -n "$P" ]; then
             echo "::notice::ANDROID_KEY_PASSWORD length=${#P} (expected 24)"
             openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in "$GITHUB_WORKSPACE/signing/keystore.enc" -out ks.p12 -pass env:P 2>/dev/null \
               || report "ANDROID_KEY_PASSWORD is wrong (length ${#P}, expected 24). Open ANDROID_KEY_PASSWORD.txt, copy all of it, and paste it as the secret."
-            export P
             ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log || report "gradle assembleRelease failed"
             "$BT/zipalign" -f -p 4 app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk 2>&1 | tee build.log || report "zipalign failed"
             "$BT/apksigner" sign --ks ks.p12 --ks-type PKCS12 --ks-key-alias ronihisab --ks-pass env:P --key-pass env:P --out "$GITHUB_WORKSPACE/RoniHisab.apk" aligned.apk 2>&1 | tee build.log || report "apksigner failed"
