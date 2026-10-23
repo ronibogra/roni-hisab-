@@ -1,11 +1,5 @@
-# Builds the Windows agent (lailagent.exe) in the cloud, on a Windows machine
-# provided by GitHub — so you need no Windows PC and no Python of your own.
-#
-# How to use:
-#   1. Put this project in a GitHub repository.
-#   2. Open the repo on github.com -> Actions -> "Build agent exe" -> Run workflow.
-#   3. When it finishes, open the run and download the "lailagent-exe" artifact.
-#      Inside is lailagent.exe. Copy it to your PCs with a lailagent.ini.
+# Builds the Windows agent (lailagent.exe) on a GitHub-hosted Windows machine and
+# publishes it as a downloadable Release asset — so you need no Windows or Python.
 name: Build agent exe
 
 on:
@@ -13,6 +7,10 @@ on:
   push:
     paths:
       - 'agent/**'
+      - '.github/workflows/build-agent.yml'
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -27,9 +25,19 @@ jobs:
       - name: Build the exe
         working-directory: agent
         run: pyinstaller --noconfirm lailagent.spec
-      - name: Upload lailagent.exe
+      - name: Upload as a build artifact
         uses: actions/upload-artifact@v4
         with:
           name: lailagent-exe
           path: agent/dist/lailagent.exe
           if-no-files-found: error
+      - name: Publish as a downloadable Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release delete lailagent -y --cleanup-tag 2>$null
+          gh release create lailagent agent/dist/lailagent.exe `
+            --title "Laila Group IT Agent (lailagent.exe)" `
+            --notes "lailagent.exe built automatically by GitHub Actions. Download it below, put it next to a lailagent.ini (server + agent key), and run it. No Python needed." `
+            --target $env:GITHUB_SHA

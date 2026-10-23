@@ -26,3 +26,5 @@ exe = EXE(
     icon=None,
     version=None,
 )
+
+# build: publish exe as release asset
