@@ -1,0 +1,35 @@
+# Builds the Windows agent (lailagent.exe) in the cloud, on a Windows machine
+# provided by GitHub — so you need no Windows PC and no Python of your own.
+#
+# How to use:
+#   1. Put this project in a GitHub repository.
+#   2. Open the repo on github.com -> Actions -> "Build agent exe" -> Run workflow.
+#   3. When it finishes, open the run and download the "lailagent-exe" artifact.
+#      Inside is lailagent.exe. Copy it to your PCs with a lailagent.ini.
+name: Build agent exe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'agent/**'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build tools
+        run: pip install pyinstaller psutil requests pystray Pillow
+      - name: Build the exe
+        working-directory: agent
+        run: pyinstaller --noconfirm lailagent.spec
+      - name: Upload lailagent.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: lailagent-exe
+          path: agent/dist/lailagent.exe
+          if-no-files-found: error
