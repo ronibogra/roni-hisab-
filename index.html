@@ -129,7 +129,12 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 /* ================= helpers ================= */
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const num=v=>{const n=parseFloat(String(v??'').replace(/[,৳\s]/g,''));return isFinite(n)?n:0};
+const BN='০১২৩৪৫৬৭৮৯';
+const num=v=>{if(typeof v==='number')return isFinite(v)?v:0;
+  let t=String(v??'').trim().replace(/[০-৯]/g,d=>BN.indexOf(d)).replace(/[,৳\s]|টাকা|tk/gi,'');if(!t)return 0;
+  let mul=1;const W=[[/(কোটি|crore|cr)$/i,1e7],[/(লাখ|লক্ষ|lakh|lac|lak)$/i,1e5],[/(হাজার|thousand|k)$/i,1e3]];
+  for(const[re,m]of W)if(re.test(t)){t=t.replace(re,'');mul=m;break}
+  const n=parseFloat(t);return isFinite(n)?n*mul:0};
 const tk=n=>(n<0?'-':'')+'৳'+Math.round(Math.abs(+n||0)).toLocaleString('en-IN');
 const pad=n=>String(n).padStart(2,'0');
 const ymd=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
@@ -464,6 +469,7 @@ async function copyText(v){try{await navigator.clipboard.writeText(v)}catch(e){c
 function genPass(n=16){const c='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*?-_';const r=crypto.getRandomValues(new Uint32Array(n));
   let p='';for(let i=0;i<n;i++)p+=c[r[i]%c.length];return /\d/.test(p)&&/[!@#$%&*?\-_]/.test(p)&&/[A-Z]/.test(p)&&/[a-z]/.test(p)?p:genPass(n)}
 
+const propVal=r=>num(r.value)||num(r.pprice);
 /* ================= schema ================= */
 const F=(k,l,t='text',o)=>({k,l,t,o});
 const SEC={
@@ -484,9 +490,9 @@ const SEC={
  recv:{name:'পাওনা (অন্যের কাছে)',fields:[F('name','নাম'),F('given','দিয়েছি','money'),F('returned','ফেরত পেয়েছি','money'),F('date','তারিখ','date'),F('mobile','মোবাইল'),F('note','নোট')],
    title:r=>r.name,sub:r=>num(r.returned)?'দিয়েছি '+tk(r.given)+' · ফেরত '+tk(r.returned):(r.date?fmtDate(r.date):''),amt:r=>num(r.given)-num(r.returned)},
  property:{name:'বাড়ি ও সম্পত্তি',totLabel:'মোট আনুমানিক মূল্য',fields:[F('kind','ধরণ','select',['বাড়ি','ফ্ল্যাট','জমি','দোকান','গাড়ি','মোটরসাইকেল','স্বর্ণ','আসবাব','ইলেকট্রনিক্স','অন্যান্য']),
-   F('name','নাম / বিবরণ'),F('loc','ঠিকানা / অবস্থান'),F('size','পরিমাণ (শতাংশ / বর্গফুট / ভরি)'),F('owner','মালিকের নাম'),F('pdate','কেনার তারিখ','date'),F('pprice','কেনা দাম','money'),
-   F('value','বর্তমান আনুমানিক মূল্য','money'),F('rent','মাসিক ভাড়া আয়','money'),F('doc','দলিল / রেজিস্ট্রেশন নম্বর','secret'),F('zakat','জাকাতযোগ্য? (স্বর্ণ, ব্যবসার মাল)','select',['না','হ্যাঁ']),F('note','নোট')],
-   title:r=>r.name||r.kind,sub:r=>[r.kind,r.loc,r.size,num(r.rent)?'ভাড়া '+tk(r.rent)+'/মাস':''].filter(Boolean).join(' · '),amt:r=>num(r.value)},
+   F('name','নাম / বিবরণ (যেমন: উত্তরা ফ্ল্যাট)'),F('value','বর্তমান আনুমানিক মূল্য — নিট সম্পদে এটা যোগ হবে','money'),F('pprice','কেনা দাম','money'),
+   F('loc','ঠিকানা / অবস্থান'),F('size','পরিমাণ (শতাংশ / বর্গফুট / ভরি)'),F('owner','মালিকের নাম'),F('pdate','কেনার তারিখ','date'),F('rent','মাসিক ভাড়া আয়','money'),F('doc','দলিল / রেজিস্ট্রেশন নম্বর','secret'),F('zakat','জাকাতযোগ্য? (স্বর্ণ, ব্যবসার মাল)','select',['না','হ্যাঁ']),F('note','নোট')],
+   title:r=>r.name||r.kind,sub:r=>[r.kind,r.loc,r.size,num(r.rent)?'ভাড়া '+tk(r.rent)+'/মাস':'',!propVal(r)?'⚠ মূল্য দেওয়া নেই — চেপে মূল্য দিন':(!num(r.value)?'কেনা দাম ধরা হয়েছে':'')].filter(Boolean).join(' · '),amt:r=>propVal(r)},
  children:{name:'সন্তান',totLabel:'এ মাসে সন্তানদের জন্য খরচ',fields:[F('name','নাম'),F('gender','ছেলে / মেয়ে','select',['ছেলে','মেয়ে']),F('dob','জন্ম তারিখ','date'),F('school','স্কুল / প্রতিষ্ঠান'),
    F('cls','শ্রেণি'),F('roll','রোল'),F('fee','মাসিক বেতন / নির্দিষ্ট খরচ','money'),F('blood','রক্তের গ্রুপ','select',BLOOD),F('birthNo','জন্ম নিবন্ধন নম্বর','secret'),F('doctor','ডাক্তার / ফোন'),F('note','নোট (এলার্জি, টিকা, শখ…)')],
    title:r=>r.name,sub:r=>[r.gender,age(r.dob),r.cls?'শ্রেণি '+r.cls:'',r.school,r.blood].filter(Boolean).join(' · '),amt:r=>spentOn(r.name),amtHint:'এ মাসে খরচ'},
@@ -622,7 +628,7 @@ function totals(){
   const inv=s(act.filter(r=>r.cat==='বিনিয়োগ'),r=>num(r.value));
   const loanOnly=s(D.loans,r=>num(r.total)-num(r.paid)),loan=loanOnly+cc;
   const recv=s(D.recv,r=>num(r.given)-num(r.returned));
-  const prop=s(D.property,r=>num(r.value)),propZ=s(D.property,r=>r.zakat==='হ্যাঁ'?num(r.value):0);
+  const prop=s(D.property,propVal),propZ=s(D.property,r=>r.zakat==='হ্যাঁ'?propVal(r):0);
   const custA=[],custL=[];
   Object.entries((D.settings&&D.settings.customs)||{}).forEach(([id,c])=>{if(!c.role||!SEC[id]||!SEC[id].amt)return;
     const v=s(D[id]||[],r=>SEC[id].amt(r));(c.role==='asset'?custA:custL).push({id,name:mName(id),v})});
@@ -662,7 +668,7 @@ function home(){
   const T=totals(),ymN=ymNow(),m=monthSum(ymN),Y=periodSum(ymN.slice(0,4)),td=DATA.tx.filter(t=>t.date===today()&&t.type!=='আয়'&&!t.fund).reduce((a,t)=>a+num(t.amount),0);
   const recent=[...DATA.tx].sort((a,b)=>b.date.localeCompare(a.date)||(b.id>a.id?1:-1)).slice(0,5);
   const pct=v=>T.assetsAll>0?(v/T.assetsAll*100):0;
-  const byKind={};DATA.property.forEach(p=>{const k=p.kind||'অন্যান্য';byKind[k]=(byKind[k]||0)+num(p.value)});
+  const byKind={};DATA.property.forEach(p=>{const k=p.kind||'অন্যান্য';byKind[k]=(byKind[k]||0)+propVal(p)});
   const propSub=Object.entries(byKind).sort((a,b)=>b[1]-a[1]).map(([k,v])=>k+' '+tk(v)).join(' · ');
   const savSub=(()=>{const o={};DATA.savings.filter(r=>(r.status||'চলমান')==='চলমান'&&r.cat!=='বিনিয়োগ').forEach(r=>{const k=r.kind||'অন্যান্য';o[k]=(o[k]||0)+num(r.value)});return Object.entries(o).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([k,v])=>k+' '+tk(v)).join(' · ')})();
   const A=[['banks','🏦','ব্যাংক',T.bank,DATA.banks.filter(b=>b.type!=='ক্রেডিট কার্ড').length+'টি অ্যাকাউন্ট','#2E6DA4'],
@@ -670,7 +676,7 @@ function home(){
     ['savings','💰','সঞ্চয় (FDR, DPS, সঞ্চয়পত্র…)',T.savOnly,savSub,'#1E8E5A'],
     ['funds','🏛️','সমিতি / ফান্ড',T.fundT,DATA.funds.filter(active).map(f=>f.name).join(', '),'#13A3A3'],
     ['savings','📈','বিনিয়োগ (শেয়ার ইত্যাদি)',T.inv,'','#B7791F'],
-    ['property','🏡','বাড়ি ও সম্পত্তি',T.prop,propSub||'＋ চেপে বাড়ি, জমি, স্বর্ণ যোগ করুন','#C2413B'],
+    ['property','🏡','বাড়ি ও সম্পত্তি',T.prop,(DATA.property.some(p=>!propVal(p))?'⚠ '+DATA.property.filter(p=>!propVal(p)).length+'টির মূল্য দেওয়া নেই — চেপে মূল্য দিন · ':'')+(T.prop?propSub:DATA.property.length?'':'＋ চেপে বাড়ি, ফ্ল্যাট, জমি, স্বর্ণ যোগ করুন'),'#C2413B'],
     ['recv','🤝','পাওনা (অন্যের কাছে)',T.recv,DATA.recv.filter(r=>num(r.given)-num(r.returned)>0).length+' জনের কাছে','#D4771C'],
     ...T.custA.map(x=>[x.id,(mItem(x.id)||{}).icon||'📝',x.name,x.v,'নিজের মেনু','#6B7686'])];
   const L=[['loans','💳','ঋণ (বাকি)',T.loanOnly,DATA.loans.map(l=>l.src).join(', ')],['banks','💳','ক্রেডিট কার্ডের বকেয়া',T.cc,''],
@@ -809,7 +815,7 @@ function fieldHtml(f,v){
   if(f.t==='password')return `<label for="${id}">${esc(f.l)}</label><div style="display:flex;gap:6px"><div class="pwwrap" style="flex:1"><input id="${id}" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" value="${esc(v)}"><button type="button" class="peek" data-peek="${id}" aria-label="দেখুন">👁</button></div><button type="button" class="btn ghost" data-gen="${id}" title="শক্ত পাসওয়ার্ড বানান" style="padding:8px 12px">🎲</button></div>`;
   if(f.t==='for'){const o=['সংসার','নিজ',...people()];if(v&&!o.includes(v))o.push(v);return `<label for="${id}">${esc(f.l)}</label><select id="${id}">${o.map(x=>`<option ${x==v?'selected':''}>${esc(x)}</option>`).join('')}</select>`}
   if(f.t==='person'){const o=['নিজ',...people()];if(v&&!o.includes(v))o.push(v);return `<label for="${id}">${f.l}</label><select id="${id}">${o.map(x=>`<option ${x==v?'selected':''}>${esc(x)}</option>`).join('')}</select>`}
-  if(f.t==='money')return `<label for="${id}">${esc(f.l)}</label><input id="${id}" type="text" inputmode="decimal" value="${esc(v)}">`;
+  if(f.t==='money')return `<label for="${id}">${esc(f.l)}</label><input id="${id}" type="text" inputmode="decimal" value="${esc(v)}" data-money placeholder="যেমন: 5000000 বা ৫০ লাখ"><small class="muted" data-mv="${id}">${v!==''&&v!=null?'= '+tk(num(v)):''}</small>`;
   if(f.t==='date')return `<label for="${id}">${esc(f.l)}</label><input id="${id}" type="date" value="${esc(v)}">`;
   return `<label for="${id}">${esc(f.l)}</label><input id="${id}" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(v)}">`;
 }
@@ -818,12 +824,14 @@ function editItem(sec,idx,pre){
   openModal(`<h3>${idx==null?'নতুন':'সম্পাদনা'} — ${esc(mName(sec))}</h3><form id="ef">${S.fields.map(f=>fieldHtml(f,r[f.k])).join('')}
   <div class="acts">${idx!=null?'<button type="button" class="btn danger" id="del">মুছুন</button>':''}<button type="button" class="btn ghost" id="cx">বাতিল</button><button class="btn">সংরক্ষণ</button></div></form>`);
   $('#cx').onclick=()=>{if(pre)DATA[sec].splice(idx,1);closeModal()};bindPeek();
+  document.querySelectorAll('[data-money]').forEach(i=>i.addEventListener('input',()=>{const h=document.querySelector(`[data-mv="${i.id}"]`);if(h)h.textContent=i.value.trim()?'= '+tk(num(i.value)):''}));
   document.querySelectorAll('[data-gen]').forEach(b=>b.onclick=()=>{const i=document.getElementById(b.dataset.gen);i.value=genPass();i.type='text';toast('শক্ত পাসওয়ার্ড বানানো হয়েছে')});
   if($('#del'))$('#del').onclick=async()=>{const extra=sec==='funds'&&fundTx(r.id).length?' এর সব জমার এন্ট্রিও মুছে যাবে।':sec==='recurring'?' (আগে যোগ হওয়া লেনদেনগুলো থাকবে)':'';
     if(!confirm('মুছে ফেলবেন?'+extra))return;if(sec==='funds'){DATA.tx.filter(t=>t.fund===r.id).forEach(undoTx);DATA.tx=DATA.tx.filter(t=>t.fund!==r.id)}DATA[sec].splice(idx,1);await save();closeModal();go(PAGE)};
   $('#ef').onsubmit=async e=>{e.preventDefault();const o=Object.assign({},r);
     S.fields.forEach(f=>{const raw=$('#f_'+f.k).value,v=f.t==='password'?raw:raw.trim();o[f.k]=f.t==='money'?(v===''?'':num(v)):v});if(!o.id)o.id=uid();
     if(!S.title(o)||S.title(o)==='—'){toast('প্রথম ঘরটি পূরণ করুন');return}
+    if(sec==='property'&&!propVal(o)&&!confirm('মূল্য দেওয়া হয়নি — নিট সম্পদে ৳0 যোগ হবে। তবুও সংরক্ষণ করবেন?'))return;
     if(idx==null)DATA[sec].push(o);else DATA[sec][idx]=o;await save();closeModal();go(PAGE);toast('সংরক্ষিত')};
 }
 function recentCats(type){
