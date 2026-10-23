@@ -267,11 +267,14 @@ function showLock(manual){
 }
 
 /* auto-lock on inactivity / background */
-let lastAct=Date.now(),hiddenAt=0;
+let lastAct=Date.now(),hiddenAt=0,PICKING=0;
+const picking=()=>PICKING&&Date.now()-PICKING<15*60000;
+function openPicker(sel){PICKING=Date.now();const i=$(sel);i.value='';i.click()}
 ['pointerdown','keydown','touchstart','scroll'].forEach(ev=>addEventListener(ev,()=>lastAct=Date.now(),{passive:true}));
-setInterval(()=>{if(KEY&&Date.now()-lastAct>DATA.settings.lockMin*60000)showLock()},10000);
+setInterval(()=>{if(KEY&&!picking()&&Date.now()-lastAct>DATA.settings.lockMin*60000)showLock()},10000);
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden)hiddenAt=Date.now();
+  else if(picking()){lastAct=Date.now()}
   else if(KEY&&hiddenAt&&Date.now()-hiddenAt>Math.min(60000,DATA.settings.lockMin*60000))showLock();
 });
 
@@ -884,7 +887,7 @@ function settings(){
    <button class="btn full" id="expB" style="margin-top:8px">🔐 এনক্রিপ্টেড ব্যাকআপ নিন</button>
    <button class="btn full ghost" id="impB" style="margin-top:8px">♻️ ব্যাকআপ থেকে ফেরত আনুন</button>
    <p class="muted">ব্যাকআপ ফাইলটি পাসওয়ার্ড দিয়ে তালাবদ্ধ — Google Drive বা পেনড্রাইভে রাখা নিরাপদ। Excel ফাইলে কোনো তালা নেই, সাবধানে রাখুন।</p>
-   <input type="file" id="fileX" accept=".xlsx" class="hidden"><input type="file" id="fileB" accept=".rhb,.json" class="hidden"></div>
+   <input type="file" id="fileX" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream,*/*" class="hidden"><input type="file" id="fileB" accept="*/*" class="hidden"></div>
   <h2>নিরাপত্তা</h2><div class="card">
    <label>অটো-লক (মিনিট নিষ্ক্রিয় থাকলে)</label><select id="lm">${[1,2,5,10,15].map(n=>`<option ${n==z.lockMin?'selected':''}>${n}</option>`).join('')}</select>
    <div id="bioBox" style="margin-top:12px"></div>
@@ -894,10 +897,10 @@ function settings(){
   <p class="muted" style="text-align:center">লেনদেন ${DATA.tx.length} · ব্যাংক ${DATA.banks.length} · সঞ্চয় ${DATA.savings.length} · সম্পত্তি ${DATA.property.length} · পরিবার ${DATA.children.length+DATA.parents.length}</p>`;
   const upd=async()=>{z.zIncRecv=$('#zr').checked;z.zSubLoan=$('#zl').checked;z.zRate=num($('#zp').value)||2.5;z.lockMin=+$('#lm').value;await save();settings()};
   ['#zr','#zl','#lm'].forEach(s=>$(s).onchange=upd);$('#zp').onchange=upd;
-  $('#impX').onclick=()=>$('#fileX').click();$('#fileX').onchange=e=>importExcel(e.target.files[0]);
+  $('#impX').onclick=()=>openPicker('#fileX');$('#fileX').onchange=e=>{PICKING=0;lastAct=Date.now();importExcel(e.target.files[0])};
   $('#expX').onclick=exportExcel;
-  $('#expB').onclick=async()=>{await download(new Blob([JSON.stringify(await sealWith(KEY,SALT,DATA))],{type:'application/json'}),'RoniHisab-backup-'+today()+'.rhb')};
-  $('#impB').onclick=()=>$('#fileB').click();$('#fileB').onchange=e=>importBackup(e.target.files[0]);
+  $('#expB').onclick=async()=>{await download(new Blob([JSON.stringify(await sealWith(KEY,SALT,DATA))],{type:'application/json'}),'RoniHisab-backup-'+today()+(NATIVE?'.json':'.rhb'))};
+  $('#impB').onclick=()=>openPicker('#fileB');$('#fileB').onchange=e=>{PICKING=0;lastAct=Date.now();importBackup(e.target.files[0])};
   $('#chpw').onclick=changePw;$('#gomenu').onclick=()=>go('menuedit');
   $('#wipe').onclick=async()=>{if(prompt('সব ডেটা মুছতে লিখুন: DELETE')==='DELETE'){await bioDisable();localStorage.removeItem(VKEY);setFails(0);showLock(true)}};
   bioSettings();
@@ -915,7 +918,7 @@ async function bioSettings(){
     e.target.checked=false;
     openModal(`<h3>${bioName(i.type)} চালু করুন</h3><form id="bf"><label>আপনার মাস্টার পাসওয়ার্ড</label>${pwInput('bp','পাসওয়ার্ড','current-password')}
      <div class="err" id="bfe"></div><div class="acts"><button type="button" class="btn ghost" id="bfx">বাতিল</button><button class="btn">চালু করুন</button></div></form>`);
-    bindPeek();setTimeout(()=>$('#bp').focus(),60);$('#bfx').onclick=closeModal;
+    bindPeek();setTimeout(()=>{const i=$('#bp');if(i)i.focus()},60);$('#bfx').onclick=closeModal;
     $('#bf').onsubmit=async ev=>{ev.preventDefault();const p=$('#bp').value;
       try{await openWith(p,vault())}catch(x){$('#bfe').textContent='পাসওয়ার্ড ভুল';return}
       try{await bioEnable(p);closeModal();toast(bioName(i.type)+' চালু হয়েছে');bioSettings()}
@@ -927,7 +930,7 @@ async function download(blob,name){
     const P=window.Capacitor.Plugins;
     const b=await new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]);r.onerror=no;r.readAsDataURL(blob)});
     const w=await P.Filesystem.writeFile({path:name,data:b,directory:'CACHE'});
-    await P.Share.share({title:name,files:[w.uri],dialogTitle:'কোথায় রাখবেন? (Drive / WhatsApp / Files)'});
+    PICKING=Date.now();try{await P.Share.share({title:name,files:[w.uri],dialogTitle:'কোথায় রাখবেন? (Drive / WhatsApp / Files)'})}finally{PICKING=0;lastAct=Date.now()}
   }catch(e){if(!/cancel/i.test(e&&e.message||''))alert('ফাইল শেয়ার করা যায়নি: '+(e&&e.message||e))}return}
   saveLink(blob,name);toast('ডাউনলোড হয়েছে');
 }
@@ -948,12 +951,20 @@ function changePw(){
     closeModal();toast('পাসওয়ার্ড পরিবর্তন হয়েছে — নতুন ব্যাকআপ নিন')};
 }
 async function importBackup(file){
-  if(!file)return;let blob;
-  try{blob=JSON.parse(await file.text());if(blob.app!=='RoniHisab')throw 0}catch(e){alert('এটি সঠিক ব্যাকআপ ফাইল নয়');return}
-  const pw=prompt('ব্যাকআপের পাসওয়ার্ড দিন');if(pw==null)return;
-  try{const r=await openWith(pw,blob);if(!confirm('বর্তমান সব ডেটা ব্যাকআপ দিয়ে বদলে যাবে। চালিয়ে যাবেন?'))return;
-    DATA=Object.assign(blank(),r.data);DATA.settings=Object.assign(blank().settings,r.data.settings||{});initMenu();await save();toast('ফেরত আনা হয়েছে');go('home')}
-  catch(e){alert('পাসওয়ার্ড ভুল অথবা ফাইল নষ্ট')}
+  if(!file)return;let blob,txt='';
+  try{txt=await file.text()}catch(e){alert('ফাইলটি পড়া যায়নি। ফাইলটি আগে ফোনে ডাউনলোড করে (Files / Downloads) সেখান থেকে বাছুন।');return}
+  try{const a=txt.indexOf('{'),b=txt.lastIndexOf('}');blob=JSON.parse(txt.slice(a,b+1));if(blob.app!=='RoniHisab'||!blob.ct||!blob.salt||!blob.iv)throw 0}
+  catch(e){alert(`"${file.name}" — এটি Roni Hisab-এর ব্যাকআপ ফাইল নয়।\n\nসেটিংস → "এনক্রিপ্টেড ব্যাকআপ নিন" দিয়ে বানানো ফাইলটি (RoniHisab-backup-….rhb বা .json) বাছুন। Excel ফাইল হলে "Excel থেকে আনুন" ব্যবহার করুন।`);return}
+  openModal(`<h3>♻️ ব্যাকআপ থেকে ফেরত আনুন</h3><p class="muted" style="margin:0">${esc(file.name)}${blob.at?' · তৈরি '+esc(fmtDate(String(blob.at).slice(0,10))):''}</p>
+   <form id="rb"><label>যে পাসওয়ার্ড দিয়ে ব্যাকআপটি বানানো হয়েছিল</label>${pwInput('rbp','ব্যাকআপের পাসওয়ার্ড','current-password')}
+   <p class="muted">অন্য ডিভাইসে (যেমন কম্পিউটারে) বানানো হলে সেখানকার মাস্টার পাসওয়ার্ড দিন। এই ফোনের পাসওয়ার্ড বদলাবে না।</p>
+   <div class="err" id="rbe"></div><div class="acts"><button type="button" class="btn ghost" id="rbx">বাতিল</button><button class="btn" id="rbo">ফেরত আনুন</button></div></form>`);
+  bindPeek();setTimeout(()=>{const i=$('#rbp');if(i)i.focus()},80);$('#rbx').onclick=closeModal;
+  $('#rb').onsubmit=async e=>{e.preventDefault();const er=$('#rbe'),bt=$('#rbo');er.textContent='';bt.disabled=true;bt.textContent='খোলা হচ্ছে…';
+    let r;try{r=await openWith($('#rbp').value,blob)}catch(x){bt.disabled=false;bt.textContent='ফেরত আনুন';er.textContent='পাসওয়ার্ড ভুল — যে ডিভাইসে ব্যাকআপ বানিয়েছিলেন সেখানকার পাসওয়ার্ড দিন';return}
+    const d=r.data||{},cnt=(d.tx||[]).length,cb=(d.banks||[]).length+(d.savings||[]).length+(d.property||[]).length;
+    if(!confirm(`ব্যাকআপে ${cnt}টি লেনদেন ও ${cb}টি সম্পদ আছে।\n\nএই ফোনের বর্তমান সব ডেটা ব্যাকআপ দিয়ে বদলে যাবে। চালিয়ে যাবেন?`)){bt.disabled=false;bt.textContent='ফেরত আনুন';return}
+    DATA=Object.assign(blank(),d);DATA.settings=Object.assign(blank().settings,d.settings||{});initMenu();ensureIds();await save();closeModal();toast('ফেরত আনা হয়েছে ✓');go('home')};
 }
 
 /* ---- Excel import/export (matches Roni_Personal_Data.xlsx) ---- */
@@ -986,7 +997,7 @@ async function importExcel(file){
       got[sec]=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''}).slice(1).map(row=>{const o={};m.cols.forEach((k,i)=>{if(k)o[k]=cellVal(k,row[i],SEC[sec]&&SEC[sec].custom?(SEC[sec].fields.find(f=>f.k===k)||{}).t:undefined)});return o}).filter(o=>o[m.need]);
       if(sec==='savings')got[sec].forEach(o=>{if(o.rate!==''){o.rate=num(o.rate);if(o.rate>0&&o.rate<1)o.rate=+(o.rate*100).toFixed(3)}if(!o.status)o.status='চলমান'});
       n+=got[sec].length}
-    const tws=wb.Sheets['আয়-ব্যয়'];
+    const tws=wb.Sheets['আয়-ব্যয়'];if(!Object.keys(wb.Sheets).length)throw new Error('ফাইলটি Excel নয়');
     if(tws){got.tx=XLSX.utils.sheet_to_json(tws,{header:1,raw:true,defval:''}).slice(1).filter(r=>num(r[5])>0).map(r=>({id:uid(),date:cellVal('date',r[0])||today(),type:String(r[2]).trim()==='আয়'?'আয়':'ব্যয়',cat:String(r[3]).trim()||'অন্যান্য',note:String(r[4]).trim(),amount:num(r[5]),for:String(r[6]??'').trim(),...(r[7]?{fund:String(r[7])}:{}),...(r[8]?{rid:String(r[8])}:{})}));n+=got.tx.length}
     if(!n){alert('এই ফাইলে চেনা শিট পাওয়া যায়নি। Roni_Personal_Data.xlsx ফাইলটি দিন।');return}
     if(!confirm(`${n}টি এন্ট্রি পাওয়া গেছে। এই অংশগুলোর বর্তমান ডেটা Excel দিয়ে বদলে যাবে। চালিয়ে যাবেন?`))return;
