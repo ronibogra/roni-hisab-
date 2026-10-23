@@ -59,19 +59,29 @@ jobs:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE }}
           KS_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          set -o pipefail
+          report() {
+            echo "::error title=Build step::$1"
+            grep -iE "what went wrong|error:|exception|failed|could not|not found|> " build.log | grep -v "^> Task" | head -12 | while read -r l; do echo "::error::$l"; done
+            exit 1
+          }
           chmod +x gradlew
+          echo "ANDROID_HOME=$ANDROID_HOME"
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          echo "build-tools: $BT"
           if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ]; then
-            ./gradlew assembleRelease --no-daemon
-            echo "$KS_B64" | base64 -d > ks.p12
-            "$BT/zipalign" -f -p 4 app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
-            "$BT/apksigner" sign --ks ks.p12 --ks-key-alias ronihisab --ks-pass env:KS_PASS --key-pass env:KS_PASS --out "$GITHUB_WORKSPACE/RoniHisab.apk" aligned.apk
+            echo "Signing secrets found - release build"
+            ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log || report "gradle assembleRelease failed"
+            echo "$KS_B64" | tr -d ' \r\n' | base64 -d > ks.p12 || report "ANDROID_KEYSTORE secret is not valid base64"
+            "$BT/zipalign" -f -p 4 app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk 2>&1 | tee build.log || report "zipalign failed"
+            "$BT/apksigner" sign --ks ks.p12 --ks-type PKCS12 --ks-key-alias ronihisab --ks-pass env:KS_PASS --key-pass env:KS_PASS --out "$GITHUB_WORKSPACE/RoniHisab.apk" aligned.apk 2>&1 | tee build.log || report "apksigner failed - check ANDROID_KEY_PASSWORD secret"
             rm -f ks.p12
           else
             echo "::warning::Signing secrets not set - building a DEBUG APK. Updates may need reinstall."
-            ./gradlew assembleDebug --no-daemon
+            ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log || report "gradle assembleDebug failed"
             cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/RoniHisab.apk"
           fi
+          ls -la "$GITHUB_WORKSPACE/RoniHisab.apk"
 
       - name: Publish APK to Releases
         uses: softprops/action-gh-release@v2
