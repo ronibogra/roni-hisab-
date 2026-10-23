@@ -574,19 +574,22 @@ function menuEdit(){
 function menuForm(id){
   const st=DATA.settings,isNew=!id,item=id?mItem(id):{name:'',icon:'📝',show:true},cust=isNew||!!st.customs[id];
   let fields=cust?(isNew?[{k:'f'+uid().slice(0,6),l:'নাম',t:'text'},{k:'f'+uid().slice(0,6),l:'পরিমাণ',t:'money'},{k:'f'+uid().slice(0,6),l:'তারিখ',t:'date'}]:st.customs[id].fields.map(f=>({...f}))):[];
-  let icon=item.icon;
+  let icon=item.icon,role=cust&&!isNew?(st.customs[id].role||''):'';
   const draw=()=>{
     openModal(`<h3>${isNew?'নতুন মেনু':'মেনু সম্পাদনা'}</h3><form id="mf">
     <label for="mn">নাম</label><input id="mn" value="${esc(item.name)}" placeholder="যেমন: গাড়ির খরচ, গরুর খামার" required>
     <label>আইকন</label><div class="emo">${EMOJI.map(e=>`<button type="button" data-e="${e}" class="${e===icon?'on':''}">${e}</button>`).join('')}</div>
-    ${cust?`<label style="margin-top:14px">ঘরগুলো (প্রথম ঘরটি তালিকায় নাম হিসেবে দেখাবে)</label>
+    ${cust?`<label for="mrole">ড্যাশবোর্ডে কীভাবে ধরা হবে</label><select id="mrole">
+      <option value="" ${!role?'selected':''}>শুধু হিসাব (নিট সম্পদে যোগ হবে না)</option><option value="asset" ${role==='asset'?'selected':''}>সম্পদ — নিট সম্পদে যোগ হবে</option><option value="liability" ${role==='liability'?'selected':''}>দায় — নিট সম্পদ থেকে বাদ যাবে</option></select>
+      <p class="muted" style="margin:4px 0 0">সম্পদ/দায় হলে প্রথম টাকার ঘরের যোগফল ধরা হবে।</p>
+      <label style="margin-top:14px">ঘরগুলো (প্রথম ঘরটি তালিকায় নাম হিসেবে দেখাবে)</label>
       <div id="fl">${fields.map((f,i)=>`<div class="frow"><input data-fl="${i}" value="${esc(f.l)}" placeholder="ঘরের নাম">
         <select data-ft="${i}">${FTYPES.map(([v,l])=>`<option value="${v}" ${f.t===v?'selected':''}>${l}</option>`).join('')}</select>
         <button type="button" class="eye" data-fx="${i}" ${fields.length<2?'disabled':''} aria-label="মুছুন">✕</button>
         ${f.t==='select'?`<input class="opts" data-fo="${i}" value="${esc(f.o||'')}" placeholder="বিকল্পগুলো কমা দিয়ে: ভালো, মাঝারি, খারাপ">`:''}</div>`).join('')}</div>
       <button type="button" class="btn ghost" id="fadd" style="margin-top:8px">＋ ঘর যোগ করুন</button>`:'<p class="muted">এটি অ্যাপের নিজস্ব মেনু — নাম ও আইকন বদলাতে পারবেন। প্রয়োজন না হলে 👁 দিয়ে লুকান।</p>'}
     <div class="acts">${!isNew&&cust?'<button type="button" class="btn danger" id="mdel">মুছুন</button>':''}<button type="button" class="btn ghost" id="mcx">বাতিল</button><button class="btn">সংরক্ষণ</button></div></form>`);
-    const keep=()=>{item.name=$('#mn').value;fields.forEach((f,i)=>{const l=document.querySelector(`[data-fl="${i}"]`),t=document.querySelector(`[data-ft="${i}"]`),o=document.querySelector(`[data-fo="${i}"]`);
+    const keep=()=>{item.name=$('#mn').value;if($('#mrole'))role=$('#mrole').value;fields.forEach((f,i)=>{const l=document.querySelector(`[data-fl="${i}"]`),t=document.querySelector(`[data-ft="${i}"]`),o=document.querySelector(`[data-fo="${i}"]`);
       if(l)f.l=l.value;if(t)f.t=t.value;if(o)f.o=o.value})};
     document.querySelectorAll('[data-e]').forEach(b=>b.onclick=()=>{icon=b.dataset.e;document.querySelectorAll('[data-e]').forEach(x=>x.classList.toggle('on',x===b))});
     document.querySelectorAll('[data-ft]').forEach(sl=>sl.onchange=()=>{keep();draw()});
@@ -600,8 +603,9 @@ function menuForm(id){
     $('#mf').onsubmit=async e=>{e.preventDefault();keep();
       const name=item.name.trim();if(!name){toast('নাম লিখুন');return}
       if(cust){fields=fields.filter(f=>f.l.trim());fields.forEach(f=>f.l=f.l.trim());if(!fields.length){toast('অন্তত একটি ঘর দিন');return}}
-      if(isNew){const nid='c_'+uid().replace('-','').slice(0,10);st.customs[nid]={name,fields};st.menu.push({id:nid,name,icon,show:true});regCustom(nid)}
-      else{item.name=name;item.icon=icon;if(cust){st.customs[id].name=name;st.customs[id].fields=fields;regCustom(id)}}
+      if(cust&&role&&!fields.some(f=>f.t==='money')){toast('সম্পদ/দায় হলে অন্তত একটি টাকার ঘর দিন');return}
+      if(isNew){const nid='c_'+uid().replace('-','').slice(0,10);st.customs[nid]={name,fields,role};st.menu.push({id:nid,name,icon,show:true});regCustom(nid)}
+      else{item.name=name;item.icon=icon;if(cust){st.customs[id].name=name;st.customs[id].fields=fields;st.customs[id].role=role;regCustom(id)}}
       await save();closeModal();renderNav();menuEdit();toast('সংরক্ষিত')};
   };draw();
 }
@@ -614,15 +618,20 @@ function totals(){
   const mob=s(D.mobile,r=>num(r.bal));
   const act=D.savings.filter(r=>(r.status||'চলমান')==='চলমান');
   const fundT=s((D.funds||[]).filter(active),r=>fundBal(r));
-  const sav=s(act.filter(r=>r.cat!=='বিনিয়োগ'),r=>num(r.value))+fundT;
+  const savOnly=s(act.filter(r=>r.cat!=='বিনিয়োগ'),r=>num(r.value)),sav=savOnly+fundT;
   const inv=s(act.filter(r=>r.cat==='বিনিয়োগ'),r=>num(r.value));
-  const loan=s(D.loans,r=>num(r.total)-num(r.paid))+cc;
+  const loanOnly=s(D.loans,r=>num(r.total)-num(r.paid)),loan=loanOnly+cc;
   const recv=s(D.recv,r=>num(r.given)-num(r.returned));
   const prop=s(D.property,r=>num(r.value)),propZ=s(D.property,r=>r.zakat==='হ্যাঁ'?num(r.value):0);
+  const custA=[],custL=[];
+  Object.entries((D.settings&&D.settings.customs)||{}).forEach(([id,c])=>{if(!c.role||!SEC[id]||!SEC[id].amt)return;
+    const v=s(D[id]||[],r=>SEC[id].amt(r));(c.role==='asset'?custA:custL).push({id,name:mName(id),v})});
+  const cA=s(custA,x=>x.v),cL=s(custL,x=>x.v);
   const assets=bank+mob+sav+inv, net=assets-loan;
+  const assetsAll=assets+prop+recv+cA, liab=loan+cL, netWorth=assetsAll-liab;
   const z=D.settings;
   const zBase=assets+propZ+(z.zIncRecv?recv:0)-(z.zSubLoan?loan:0);
-  return {fundT,bank,mob,sav,inv,loan,recv,prop,assets,net,netR:net+recv,netAll:net+recv+prop,zBase,zakat:Math.max(0,zBase)*num(z.zRate)/100};
+  return {fundT,bank,mob,savOnly,sav,inv,loanOnly,cc,loan,recv,prop,custA,custL,cA,cL,assets,net,netR:net+recv,assetsAll,liab,netWorth,netAll:netWorth,zBase,zakat:Math.max(0,zBase)*num(z.zRate)/100};
 }
 function monthSum(ym){
   let i=0,e=0,f=0,fw=0;const cats={};
@@ -650,26 +659,63 @@ $('#fab').onclick=()=>{if(PAGE==='daily'||PAGE==='home')txForm();else if(SEC[PAG
 /* ================= pages ================= */
 function home(){
   $('#ttl').textContent='Roni Hisab';
-  const T=totals(),m=monthSum(today().slice(0,7)),td=DATA.tx.filter(t=>t.date===today()&&t.type!=='আয়').reduce((a,t)=>a+num(t.amount),0);
+  const T=totals(),ymN=ymNow(),m=monthSum(ymN),Y=periodSum(ymN.slice(0,4)),td=DATA.tx.filter(t=>t.date===today()&&t.type!=='আয়'&&!t.fund).reduce((a,t)=>a+num(t.amount),0);
   const recent=[...DATA.tx].sort((a,b)=>b.date.localeCompare(a.date)||(b.id>a.id?1:-1)).slice(0,5);
+  const pct=v=>T.assetsAll>0?(v/T.assetsAll*100):0;
+  const byKind={};DATA.property.forEach(p=>{const k=p.kind||'অন্যান্য';byKind[k]=(byKind[k]||0)+num(p.value)});
+  const propSub=Object.entries(byKind).sort((a,b)=>b[1]-a[1]).map(([k,v])=>k+' '+tk(v)).join(' · ');
+  const savSub=(()=>{const o={};DATA.savings.filter(r=>(r.status||'চলমান')==='চলমান'&&r.cat!=='বিনিয়োগ').forEach(r=>{const k=r.kind||'অন্যান্য';o[k]=(o[k]||0)+num(r.value)});return Object.entries(o).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([k,v])=>k+' '+tk(v)).join(' · ')})();
+  const A=[['banks','🏦','ব্যাংক',T.bank,DATA.banks.filter(b=>b.type!=='ক্রেডিট কার্ড').length+'টি অ্যাকাউন্ট','#2E6DA4'],
+    ['mobile','📱','মোবাইল ব্যাংকিং',T.mob,DATA.mobile.map(x=>x.service).filter((v,i,a)=>a.indexOf(v)===i).join(', '),'#7B61C4'],
+    ['savings','💰','সঞ্চয় (FDR, DPS, সঞ্চয়পত্র…)',T.savOnly,savSub,'#1E8E5A'],
+    ['funds','🏛️','সমিতি / ফান্ড',T.fundT,DATA.funds.filter(active).map(f=>f.name).join(', '),'#13A3A3'],
+    ['savings','📈','বিনিয়োগ (শেয়ার ইত্যাদি)',T.inv,'','#B7791F'],
+    ['property','🏡','বাড়ি ও সম্পত্তি',T.prop,propSub||'＋ চেপে বাড়ি, জমি, স্বর্ণ যোগ করুন','#C2413B'],
+    ['recv','🤝','পাওনা (অন্যের কাছে)',T.recv,DATA.recv.filter(r=>num(r.given)-num(r.returned)>0).length+' জনের কাছে','#D4771C'],
+    ...T.custA.map(x=>[x.id,(mItem(x.id)||{}).icon||'📝',x.name,x.v,'নিজের মেনু','#6B7686'])];
+  const L=[['loans','💳','ঋণ (বাকি)',T.loanOnly,DATA.loans.map(l=>l.src).join(', ')],['banks','💳','ক্রেডিট কার্ডের বকেয়া',T.cc,''],
+    ...T.custL.map(x=>[x.id,(mItem(x.id)||{}).icon||'📝',x.name,x.v,'নিজের মেনু'])].filter(x=>x[3]);
+  const line=(go,ic,l,v,sub,cls,p)=>`<div class="row tap" data-go="${go}"><span style="font-size:20px;width:28px;text-align:center">${ic}</span><div class="t"><div>${esc(l)}</div>${sub?`<small>${esc(sub)}</small>`:''}</div>
+    <div class="a ${cls||''}" style="text-align:right">${tk(v)}${p!=null?`<br><small class="muted" style="font-weight:400">${p.toFixed(1)}%</small>`:''}</div></div>`;
+  const stack=A.filter(x=>x[3]>0);
+  const names=[...DATA.children,...DATA.parents].map(x=>x.name).filter(Boolean);
+  const fam=names.reduce((a,n)=>a+spentOn(n),0);
+  const medM=DATA.meds.filter(x=>x.status!=='বন্ধ').reduce((a,x)=>a+num(x.cost),0),rentM=DATA.property.reduce((a,x)=>a+num(x.rent),0);
+  const otherCust=Object.keys(DATA.settings.customs||{}).filter(id=>!DATA.settings.customs[id].role&&SEC[id]&&SEC[id].amt&&(DATA[id]||[]).length);
   $('#view').innerHTML=`
-  <div class="stat big" style="margin-bottom:10px"><small>নিট সম্পদ (নগদ ও সঞ্চয়)</small><b>${tk(T.net)}</b><small>পাওনা সহ ${tk(T.netR)} · বাড়ি-সম্পত্তি সহ ${tk(T.netAll)}</small></div>
+  <div class="stat big" style="margin-bottom:10px"><small>মোট নিট সম্পদ</small><b style="font-size:28px">${tk(T.netWorth)}</b>
+    <small>মোট সম্পদ ${tk(T.assetsAll)} − মোট দায় ${tk(T.liab)}</small>
+    ${stack.length?`<div style="display:flex;height:9px;border-radius:5px;overflow:hidden;margin-top:10px;background:rgba(255,255,255,.2)">${stack.map(x=>`<i style="width:${pct(x[3])}%;background:${x[5]}" title="${esc(x[2])}"></i>`).join('')}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:6px;font-size:11px;opacity:.92">${stack.map(x=>`<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${x[5]};margin-right:3px"></span>${esc(x[2].split(' (')[0])} ${pct(x[3]).toFixed(0)}%</span>`).join('')}</div>`:''}</div>
   ${pendingHtml()}
   ${upcomingHtml()}
+  <h2>সম্পদ</h2><div class="card">${A.map(x=>line(x[0],x[1],x[2],x[3],x[4],'',pct(x[3]))).join('')}
+    <div class="row" style="border-top:2px solid var(--line)"><div class="t"><b>মোট সম্পদ</b></div><div class="a" style="font-size:17px">${tk(T.assetsAll)}</div></div></div>
+  <h2>দায়</h2><div class="card">${L.length?L.map(x=>line(x[0],x[1],x[2],x[3],x[4],'exp')).join(''):'<p class="muted" style="margin:4px 0">কোনো দায় নেই</p>'}
+    <div class="row" style="border-top:2px solid var(--line)"><div class="t"><b>মোট দায়</b></div><div class="a exp" style="font-size:17px">${tk(T.liab)}</div></div></div>
+  <div class="card" style="border:2px solid var(--pri)">
+    <div class="row"><div class="t">মোট সম্পদ</div><div class="a">${tk(T.assetsAll)}</div></div>
+    <div class="row"><div class="t">(−) মোট দায়</div><div class="a exp">${tk(T.liab)}</div></div>
+    <div class="row"><div class="t"><b>(=) নিট সম্পদ</b></div><div class="a" style="font-size:19px;color:var(--pri)">${tk(T.netWorth)}</div></div>
+    <p class="muted" style="margin:6px 0 0">শুধু নগদ ও সঞ্চয় (বাড়ি-সম্পত্তি ও পাওনা ছাড়া): <b>${tk(T.net)}</b></p></div>
+  <h2>এ মাসের হিসাব — ${monthLabel(ymN)}</h2>
   <div class="grid">
-    <div class="stat tap" data-go="reports"><small>${MONTHS[new Date().getMonth()]} মাসে আয়</small><b class="inc">${tk(m.i)}</b></div>
-    <div class="stat tap" data-go="reports"><small>এ মাসে হাতে বাকি</small><b class="${m.i-m.e-m.f+m.fw<0?'exp':''}">${tk(m.i-m.e-m.f+m.fw)}</b></div>
-    <div class="stat"><small>আজকের খরচ</small><b class="exp">${tk(td)}</b></div>
-    <div class="stat"><small>${MONTHS[new Date().getMonth()]} মাসে খরচ</small><b class="exp">${tk(m.e)}</b></div>
-    <div class="stat"><small>ব্যাংক ব্যালান্স</small><b>${tk(T.bank)}</b></div>
-    <div class="stat"><small>মোবাইল ব্যাংকিং</small><b>${tk(T.mob)}</b></div>
-    <div class="stat tap" data-go="funds"><small>সঞ্চয় (সমিতি সহ)</small><b>${tk(T.sav)}</b>${T.fundT?`<small>সমিতিতে ${tk(T.fundT)}</small>`:''}</div>
-    <div class="stat"><small>বিনিয়োগ</small><b>${tk(T.inv)}</b></div>
-    <div class="stat"><small>বাকি ঋণ</small><b class="exp">${tk(T.loan)}</b></div>
-    <div class="stat"><small>পাওনা</small><b class="inc">${tk(T.recv)}</b></div>
-    <div class="stat tap" data-go="property"><small>বাড়ি ও সম্পত্তি</small><b>${tk(T.prop)}</b></div>
-    <div class="stat tap" data-go="children"><small>এ মাসে পরিবারের জন্য খরচ</small><b class="exp">${tk(people().reduce((a,n)=>a+spentOn(n),0))}</b></div>
+    <div class="stat tap" data-go="reports"><small>আয়</small><b class="inc">${tk(m.i)}</b></div>
+    <div class="stat tap" data-go="reports"><small>খরচ</small><b class="exp">${tk(m.e)}</b><small>আজ ${tk(td)}</small></div>
+    <div class="stat tap" data-go="funds"><small>সমিতি / ফান্ডে জমা</small><b>${tk(m.f-m.fw)}</b></div>
+    <div class="stat tap" data-go="reports"><small>হাতে বাকি</small><b class="${m.i-m.e-m.f+m.fw<0?'exp':'inc'}">${tk(m.i-m.e-m.f+m.fw)}</b></div>
   </div>
+  <h2>এ বছর — ${ymN.slice(0,4)}</h2><div class="card tap" data-go="reports">
+    <div class="row"><div class="t">মোট আয়</div><div class="a inc">${tk(Y.i)}</div></div>
+    <div class="row"><div class="t">মোট খরচ</div><div class="a exp">${tk(Y.e)}</div></div>
+    <div class="row"><div class="t">সমিতি / ফান্ডে জমা</div><div class="a">${tk(Y.f-Y.fw)}</div></div>
+    <div class="row"><div class="t"><b>হাতে বাকি</b></div><div class="a ${Y.left<0?'exp':'inc'}">${tk(Y.left)}</div></div></div>
+  <h2>পরিবার ও নিয়মিত</h2><div class="card">
+    ${line('children','👨‍👩‍👧','এ মাসে পরিবারের জন্য খরচ',fam,names.map(n=>n+' '+tk(spentOn(n))).join(' · '),'exp')}
+    ${medM?line('meds','💊','মাসিক ওষুধ খরচ',medM,DATA.meds.filter(x=>x.status!=='বন্ধ').length+'টি ওষুধ','exp'):''}
+    ${rentM?line('property','🏪','মাসিক ভাড়া আয় (সম্পত্তি থেকে)',rentM,'','inc'):''}
+    ${line('recurring','🔁','নিয়মিত আয় − খরচ (প্রতি মাসে)',DATA.recurring.filter(active).reduce((a,r)=>a+(r.type==='আয়'?num(r.amount):-num(r.amount)),0),DATA.recurring.filter(active).length+'টি নিয়মিত এন্ট্রি','')}
+    ${otherCust.map(id=>line(id,(mItem(id)||{}).icon||'📝',mName(id),(DATA[id]||[]).reduce((a,r)=>a+SEC[id].amt(r),0),'নিজের মেনু · মোট','')).join('')}</div>
   <h2>জাকাত</h2>
   <div class="card tap" id="zk"><div class="row" style="padding:0;border:0"><div class="t"><div>প্রদেয় জাকাত (${num(DATA.settings.zRate)}%)</div><small>জাকাতযোগ্য সম্পদ ${tk(T.zBase)} · সেটিংসে পরিবর্তন করুন</small></div><div class="a">${tk(T.zakat)}</div></div></div>
   <h2>সাম্প্রতিক লেনদেন</h2>
@@ -942,7 +988,10 @@ async function importExcel(file){
 }
 function exportExcel(){
   const wb=XLSX.utils.book_new(),T=totals();
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['RONI — ব্যক্তিগত হিসাব',today()],[],['মোট ব্যাংক ব্যালান্স',T.bank],['মোট মোবাইল ব্যাংকিং',T.mob],['মোট সঞ্চয়',T.sav],['মোট বিনিয়োগ',T.inv],['মোট সম্পদ',T.assets],['মোট বাকি ঋণ',T.loan],['নিট সম্পদ',T.net],['মোট পাওনা',T.recv],['প্রদেয় জাকাত',T.zakat]]),'ড্যাশবোর্ড');
+  const mS=monthSum(ymNow()),yS=periodSum(ymNow().slice(0,4));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['RONI — ব্যক্তিগত হিসাব',today()],[],['সম্পদ'],['ব্যাংক',T.bank],['মোবাইল ব্যাংকিং',T.mob],['সঞ্চয় (FDR, DPS, সঞ্চয়পত্র…)',T.savOnly],['সমিতি / ফান্ড',T.fundT],['বিনিয়োগ',T.inv],['বাড়ি ও সম্পত্তি',T.prop],['পাওনা',T.recv],...T.custA.map(x=>[x.name,x.v]),['মোট সম্পদ',T.assetsAll],[],
+    ['দায়'],['ঋণ (বাকি)',T.loanOnly],['ক্রেডিট কার্ডের বকেয়া',T.cc],...T.custL.map(x=>[x.name,x.v]),['মোট দায়',T.liab],[],['নিট সম্পদ (সম্পদ − দায়)',T.netWorth],['শুধু নগদ ও সঞ্চয়',T.net],[],
+    ['এ মাস — '+monthLabel(ymNow())],['আয়',mS.i],['খরচ',mS.e],['সমিতি / ফান্ডে জমা',mS.f-mS.fw],['হাতে বাকি',mS.i-mS.e-mS.f+mS.fw],[],['এ বছর — '+ymNow().slice(0,4)],['আয়',yS.i],['খরচ',yS.e],['সমিতি / ফান্ডে জমা',yS.f-yS.fw],['হাতে বাকি',yS.left],[],['প্রদেয় জাকাত',T.zakat]]),'ড্যাশবোর্ড');
   const rem={loans:r=>num(r.total)-num(r.paid),recv:r=>num(r.given)-num(r.returned)};
   for(const[sec,m]of Object.entries(XMAP)){
     const lab=k=>k?(SEC[sec].fields.find(f=>f.k===k)||{l:k}).l:'বাকি (অটো)';
