@@ -20,7 +20,7 @@ exe = EXE(
     name='lailagent',
     debug=False,
     strip=False,
-    upx=True,
+    upx=False,
     runtime_tmpdir=None,
     console=False,          # no console window; it lives in the tray
     icon=None,
@@ -28,3 +28,5 @@ exe = EXE(
 )
 
 # build: publish exe as release asset
+
+# rebuild: UPX disabled to avoid antivirus false positives
