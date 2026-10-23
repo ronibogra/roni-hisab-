@@ -39,19 +39,32 @@ jobs:
         working-directory: build
         run: |
           npm init -y > /dev/null
-          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/filesystem@6 @capacitor/share@6
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/filesystem@6 @capacitor/share@6 @capgo/capacitor-native-biometric@6
           npx cap init "Roni Hisab" com.roni.hisab --web-dir www
           npx cap add android
           npx cap sync android
 
-      - name: Set app icon
+      - name: Set app icon and biometric permission
         run: |
           RES=build/android/app/src/main/res
-          rm -rf "$RES/mipmap-anydpi-v26"
           for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            cp "android-icons/$d.png" "$RES/mipmap-$d/ic_launcher.png"
-            cp "android-icons/$d.png" "$RES/mipmap-$d/ic_launcher_round.png"
+            cp "android-icons/$d.png"       "$RES/mipmap-$d/ic_launcher.png"
+            cp "android-icons/${d}_round.png" "$RES/mipmap-$d/ic_launcher_round.png"
+            cp "android-icons/${d}_fg.png"  "$RES/mipmap-$d/ic_launcher_foreground.png"
+            cp "android-icons/${d}_bg.png"  "$RES/mipmap-$d/ic_launcher_bg.png"
           done
+          mkdir -p "$RES/mipmap-anydpi-v26"
+          for n in ic_launcher ic_launcher_round; do
+            printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
+              '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">' \
+              '  <background android:drawable="@mipmap/ic_launcher_bg"/>' \
+              '  <foreground android:drawable="@mipmap/ic_launcher_foreground"/>' \
+              '</adaptive-icon>' > "$RES/mipmap-anydpi-v26/$n.xml"
+          done
+          MAN=build/android/app/src/main/AndroidManifest.xml
+          grep -q USE_BIOMETRIC "$MAN" || sed -i 's#</manifest>#    <uses-permission android:name="android.permission.USE_BIOMETRIC" />\n</manifest>#' "$MAN"
+          grep -n "USE_BIOMETRIC" "$MAN"
+          grep -n "NativeBiometric\|native-biometric" build/android/capacitor.settings.gradle || { echo "::error::biometric plugin not linked"; exit 1; }
 
       - name: Build APK
         working-directory: build/android
