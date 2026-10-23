@@ -72,7 +72,11 @@ jobs:
           if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ]; then
             echo "Signing secrets found - release build"
             ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log || report "gradle assembleRelease failed"
-            echo "$KS_B64" | tr -d ' \r\n' | base64 -d > ks.p12 || report "ANDROID_KEYSTORE secret is not valid base64"
+            K=$(printf '%s' "$KS_B64" | tr -d ' \r\n\t'); P=$(printf '%s' "$KS_PASS" | tr -d '\r\n')
+            echo "::notice::ANDROID_KEYSTORE length=${#K} (expected 3476), ANDROID_KEY_PASSWORD length=${#P} (expected 24)"
+            if [ ${#K} -lt 200 ] && [ ${#P} -gt 200 ]; then echo "::warning::Secrets look swapped - using them the other way round"; T=$K; K=$P; P=$T; fi
+            printf '%s' "$K" | base64 -d > ks.p12 2>/dev/null || report "ANDROID_KEYSTORE secret is incomplete (length ${#K}, expected 3476). Re-paste the whole ANDROID_KEYSTORE.txt"
+            export KS_PASS="$P"
             "$BT/zipalign" -f -p 4 app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk 2>&1 | tee build.log || report "zipalign failed"
             "$BT/apksigner" sign --ks ks.p12 --ks-type PKCS12 --ks-key-alias ronihisab --ks-pass env:KS_PASS --key-pass env:KS_PASS --out "$GITHUB_WORKSPACE/RoniHisab.apk" aligned.apk 2>&1 | tee build.log || report "apksigner failed - check ANDROID_KEY_PASSWORD secret"
             rm -f ks.p12
