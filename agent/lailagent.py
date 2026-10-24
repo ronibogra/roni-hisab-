@@ -1,12 +1,16 @@
 """Laila Group IT Agent.
 
 A small program that runs on a company computer and reports, to the Laila Group
-Network Monitor, this computer's hardware details and live performance
-(CPU, memory, disk, uptime). It shows a tray icon so the user can see it is
-running, and what it does.
+Network Monitor, this computer's hardware details, performance and how long each
+program is used. It shows a tray icon so the user can see it is running.
 
-It sends ONLY system information. It never reads browsing data, keystrokes,
-files or the screen.
+For IT support, an admin can also view or control this computer's screen. That
+NEVER happens silently: while a support session is open, a banner is shown on this
+screen, and (if the company turns that option on) the user must click Allow first.
+Every session is written to the monitor's audit log.
+
+Normal reporting sends ONLY system information — never browsing data, keystrokes,
+files or the screen. The screen is sent only during an on-screen support session.
 
 Run:   python lailagent.py
 Config: lailagent.ini next to this file (created on first run), or environment
@@ -14,6 +18,7 @@ Config: lailagent.ini next to this file (created on first run), or environment
 """
 import collections
 import configparser
+import io
 import json
 import os
 import platform
@@ -108,6 +113,44 @@ def _linux_hw():
         except OSError:
             pass
     return out
+
+
+def installed_software():
+    """List installed programs. On Windows, reads the uninstall registry keys."""
+    progs = {}
+    if platform.system() != "Windows":
+        return []
+    try:
+        import winreg
+    except ImportError:
+        return []
+    roots = [(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", winreg.KEY_WOW64_64KEY),
+             (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", winreg.KEY_WOW64_32KEY),
+             (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", 0)]
+    for hive, path, flag in roots:
+        try:
+            key = winreg.OpenKey(hive, path, 0, winreg.KEY_READ | flag)
+        except OSError:
+            continue
+        try:
+            for i in range(winreg.QueryInfoKey(key)[0]):
+                try:
+                    sub = winreg.OpenKey(key, winreg.EnumKey(key, i))
+                    def val(name):
+                        try:
+                            return winreg.QueryValueEx(sub, name)[0]
+                        except OSError:
+                            return None
+                    name = val("DisplayName")
+                    if not name or val("SystemComponent") == 1 or val("ParentKeyName"):
+                        continue
+                    progs[str(name)] = {"name": str(name), "version": str(val("DisplayVersion") or ""),
+                                        "publisher": str(val("Publisher") or "")}
+                except OSError:
+                    continue
+        finally:
+            key.Close()
+    return sorted(progs.values(), key=lambda p: p["name"].lower())
 
 
 def cpu_model():
@@ -222,6 +265,8 @@ class Agent:
         self.last_ok = None
         self.last_error = None
         self.specs = None
+        self.software = None
+        self._n = 0
 
     def post(self, path, payload):
         data = json.dumps(payload).encode()
@@ -238,6 +283,13 @@ class Agent:
         time.sleep(0.4)
         payload = {"agent_ver": AGENT_VER, "hostname": socket.gethostname(), "ips": ips, "macs": macs,
                    "specs": self.specs, "perf": gather_perf(), "apps": drain_apps()}
+        # installed-software list changes rarely, so send it on the first report and
+        # then about once an hour, to save bandwidth across many PCs.
+        if self._n % 120 == 0:
+            if self.software is None:
+                self.software = installed_software()
+            payload["software"] = self.software
+        self._n += 1
         res = self.post("/api/agent/report", payload)
         self.interval = max(10, int(res.get("interval") or self.interval))
         self.last_ok = time.time()
@@ -257,6 +309,8 @@ class Agent:
         print("Reporting hardware details, performance and program running-time. "
               "No browsing, keystrokes or screen data is sent.")
         threading.Thread(target=self.sampler, daemon=True).start()
+        self.remote = RemoteClient(self)
+        threading.Thread(target=self.remote.loop, daemon=True).start()
         while not self.stop.is_set():
             try:
                 self.cycle()
@@ -264,6 +318,287 @@ class Agent:
                 self.last_error = str(e)
                 print("Could not reach the monitor (%s). Will retry." % e)
             self.stop.wait(self.interval)
+
+
+# ---------------- remote support (view / control this screen) ----------------
+IS_WINDOWS = platform.system() == "Windows"
+
+# Map browser key names to Windows virtual-key codes for the common keys.
+_VK = {
+    "Enter": 0x0D, "Backspace": 0x08, "Tab": 0x09, "Escape": 0x1B, "Delete": 0x2E,
+    "ArrowLeft": 0x25, "ArrowUp": 0x26, "ArrowRight": 0x27, "ArrowDown": 0x28,
+    "Home": 0x24, "End": 0x23, "PageUp": 0x21, "PageDown": 0x22, "Insert": 0x2D,
+    "Control": 0x11, "Shift": 0x10, "Alt": 0x12, "Meta": 0x5B, "CapsLock": 0x14,
+    " ": 0x20, "F1": 0x70, "F2": 0x71, "F3": 0x72, "F4": 0x73, "F5": 0x74,
+    "F6": 0x75, "F7": 0x76, "F8": 0x77, "F9": 0x78, "F10": 0x79, "F11": 0x7A, "F12": 0x7B,
+}
+
+if IS_WINDOWS:
+    import ctypes
+    _u32 = ctypes.windll.user32
+    MOUSEEVENTF = {"move": 0x0001, "ldown": 0x0002, "lup": 0x0004, "rdown": 0x0008,
+                   "rup": 0x0010, "mdown": 0x0020, "mup": 0x0040, "wheel": 0x0800}
+
+    def screen_size():
+        return _u32.GetSystemMetrics(0), _u32.GetSystemMetrics(1)
+
+    def apply_input(ev, sw, sh):
+        try:
+            t = ev.get("type")
+            if t in ("move", "down", "up", "click", "scroll"):
+                x = int(max(0.0, min(1.0, ev.get("x", 0))) * sw)
+                y = int(max(0.0, min(1.0, ev.get("y", 0))) * sh)
+                _u32.SetCursorPos(x, y)
+            if t == "scroll":
+                _u32.mouse_event(MOUSEEVENTF["wheel"], 0, 0, int(-ev.get("dy", 0) * 120), 0)
+            elif t in ("down", "up", "click"):
+                btn = ev.get("button", "left")
+                pre = "l" if btn == "left" else "r" if btn == "right" else "m"
+                if t in ("down", "click"):
+                    _u32.mouse_event(MOUSEEVENTF[pre + "down"], 0, 0, 0, 0)
+                if t in ("up", "click"):
+                    _u32.mouse_event(MOUSEEVENTF[pre + "up"], 0, 0, 0, 0)
+            elif t == "key":
+                vk = _key_vk(ev.get("key", ""))
+                if vk is not None:
+                    down = ev.get("action") != "up"
+                    _u32.keybd_event(vk & 0xFF, 0, 0 if down else 2, 0)
+        except Exception:
+            pass
+
+    def _key_vk(key):
+        if key in _VK:
+            return _VK[key]
+        if len(key) == 1:
+            r = _u32.VkKeyScanW(ord(key))
+            if r != -1:
+                return r & 0xFF
+        return None
+else:
+    def screen_size():
+        return 0, 0
+
+    def apply_input(ev, sw, sh):
+        pass
+
+
+class RemoteUI:
+    """Owns a Tk window on its own thread: a consent dialog and a 'being viewed' banner."""
+    def __init__(self):
+        self.q = []
+        self.lock = threading.Lock()
+        self.root = None
+        self.banner = None
+        self.consent_cb = None
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        try:
+            import tkinter as tk
+        except Exception:
+            return
+        self.tk = tk
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.root.after(150, self._pump)
+        try:
+            self.root.mainloop()
+        except Exception:
+            pass
+
+    def _pump(self):
+        with self.lock:
+            jobs, self.q = self.q, []
+        for kind, arg in jobs:
+            try:
+                if kind == "banner":
+                    self._show_banner(arg)
+                elif kind == "hide":
+                    self._hide_banner()
+                elif kind == "consent":
+                    self._ask_consent(*arg)
+            except Exception:
+                pass
+        if self.root:
+            self.root.after(150, self._pump)
+
+    def _show_banner(self, text):
+        tk = self.tk
+        if self.banner is None:
+            self.banner = tk.Toplevel(self.root)
+            self.banner.overrideredirect(True)
+            self.banner.attributes("-topmost", True)
+            try:
+                self.banner.attributes("-alpha", 0.92)
+            except Exception:
+                pass
+            sw = self.root.winfo_screenwidth()
+            self.banner.geometry("%dx34+0+0" % sw)
+            self.banner.configure(bg="#b00020")
+            self.lbl = tk.Label(self.banner, bg="#b00020", fg="white", font=("Segoe UI", 11, "bold"))
+            self.lbl.pack(fill="both", expand=True)
+        self.lbl.config(text=text)
+        self.banner.deiconify()
+
+    def _hide_banner(self):
+        if self.banner is not None:
+            self.banner.withdraw()
+
+    def _ask_consent(self, text, cb):
+        tk = self.tk
+        win = tk.Toplevel(self.root)
+        win.attributes("-topmost", True)
+        win.title("Laila Group IT support")
+        win.geometry("460x180")
+        win.configure(bg="white")
+        tk.Label(win, text="Remote support request", bg="white", fg="#1f4e79",
+                 font=("Segoe UI", 13, "bold")).pack(pady=(16, 4))
+        tk.Label(win, text=text, bg="white", wraplength=420, justify="center",
+                 font=("Segoe UI", 10)).pack(pady=4)
+        row = tk.Frame(win, bg="white")
+        row.pack(pady=14)
+
+        def done(ok):
+            try:
+                win.destroy()
+            except Exception:
+                pass
+            cb(ok)
+        tk.Button(row, text="Allow", width=12, bg="#1f4e79", fg="white",
+                  command=lambda: done(True)).pack(side="left", padx=8)
+        tk.Button(row, text="Decline", width=12, command=lambda: done(False)).pack(side="left", padx=8)
+        win.protocol("WM_DELETE_WINDOW", lambda: done(False))
+
+    def show_banner(self, text):
+        with self.lock:
+            self.q.append(("banner", text))
+
+    def hide_banner(self):
+        with self.lock:
+            self.q.append(("hide", None))
+
+    def ask_consent(self, text, cb):
+        with self.lock:
+            self.q.append(("consent", (text, cb)))
+
+
+class RemoteClient:
+    """Polls the server for support-session commands; streams the screen and applies input."""
+    def __init__(self, agent):
+        self.a = agent
+        self.poll = 2
+        self.ui = RemoteUI() if IS_WINDOWS else None
+        self.session = None
+        self.streaming = False
+        self.consent_asked = None
+
+    def _post(self, path, **kw):
+        import urllib.request
+        url = self.a.server + path
+        data = kw.get("data")
+        headers = {"Authorization": "Bearer " + self.a.token}
+        headers.update(kw.get("headers", {}))
+        if "json" in kw:
+            data = json.dumps(kw["json"]).encode()
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode())
+
+    def loop(self):
+        import urllib.error
+        while not self.a.stop.is_set():
+            if self.streaming:
+                self.a.stop.wait(1.0)
+                continue
+            try:
+                ips, _ = addresses()
+                cmd = self._post("/api/agent/remote/poll", json={"ips": ips})
+                self._handle(cmd)
+            except urllib.error.URLError:
+                pass
+            except Exception:
+                pass
+            self.a.stop.wait(self.poll)
+
+    def _handle(self, cmd):
+        action = cmd.get("action")
+        ip = cmd.get("ip")
+        if action == "consent":
+            sid = cmd.get("session")
+            if self.consent_asked != sid and self.ui:
+                self.consent_asked = sid
+                who = cmd.get("by", "IT")
+                verb = "control" if cmd.get("mode") == "control" else "view"
+                self.ui.ask_consent(
+                    "%s from Laila Group IT would like to %s this computer's screen to help you.\n\n"
+                    "Do you allow it?" % (who, verb),
+                    lambda ok: self._consent(ip, sid, ok))
+        elif action == "stream":
+            self.consent_asked = None
+            threading.Thread(target=self._stream, args=(ip, cmd), daemon=True).start()
+        elif action in ("stop", "none"):
+            self.consent_asked = None
+
+    def _consent(self, ip, sid, ok):
+        try:
+            self._post("/api/agent/remote/consent", json={"ip": ip, "session": sid, "granted": bool(ok)})
+        except Exception:
+            pass
+
+    def _stream(self, ip, cmd):
+        if self.streaming:
+            return
+        self.streaming = True
+        sid = cmd.get("session")
+        try:
+            import mss
+            from PIL import Image
+        except Exception:
+            self.streaming = False
+            print("Remote view needs the 'mss' and 'Pillow' packages.")
+            return
+        self._banner(cmd)
+        sw, sh = screen_size()
+        try:
+            with mss.mss() as sct:
+                mon = sct.monitors[1]
+                if not sw:
+                    sw, sh = mon["width"], mon["height"]
+                while not self.a.stop.is_set():
+                    t0 = time.time()
+                    quality = int(cmd.get("quality", 55))
+                    maxw = int(cmd.get("max_width", 1366))
+                    shot = sct.grab(mon)
+                    img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+                    if img.width > maxw:
+                        img = img.resize((maxw, int(img.height * maxw / img.width)))
+                    buf = io.BytesIO()
+                    img.save(buf, "JPEG", quality=quality)
+                    headers = {"Content-Type": "image/jpeg", "X-Screen-W": str(sw), "X-Screen-H": str(sh),
+                               "X-Frame-W": str(img.width), "X-Frame-H": str(img.height)}
+                    res = self._post("/api/agent/remote/frame?ip=%s&session=%s" % (ip, sid),
+                                     data=buf.getvalue(), headers=headers)
+                    if res.get("action") == "stop":
+                        break
+                    if res.get("mode") == "control":
+                        for ev in res.get("input", []):
+                            apply_input(ev, sw, sh)
+                    # aim for ~5 frames a second
+                    self.a.stop.wait(max(0.0, 0.2 - (time.time() - t0)))
+        except Exception as e:
+            print("Remote session ended: %s" % e)
+        finally:
+            self.streaming = False
+            if self.ui:
+                self.ui.hide_banner()
+
+    def _banner(self, cmd):
+        if not self.ui:
+            return
+        who = cmd.get("by", "IT")
+        verb = "controlling" if cmd.get("mode") == "control" else "viewing"
+        self.ui.show_banner("  ●  Laila Group IT (%s) is %s this screen for support." % (who, verb))
 
 
 # ---------------- tray (optional, Windows/desktop) ----------------

@@ -11,7 +11,7 @@ a = Analysis(
     hiddenimports=['pystray._win32', 'PIL._tkinter_finder'],
     hookspath=[],
     runtime_hooks=[],
-    excludes=['tkinter'],
+    excludes=[],
     cipher=block_cipher,
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
@@ -20,13 +20,9 @@ exe = EXE(
     name='lailagent',
     debug=False,
     strip=False,
-    upx=False,
+    upx=True,
     runtime_tmpdir=None,
     console=False,          # no console window; it lives in the tray
     icon=None,
     version=None,
 )
-
-# build: publish exe as release asset
-
-# rebuild: UPX disabled to avoid antivirus false positives
