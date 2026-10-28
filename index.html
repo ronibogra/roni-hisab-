@@ -18,7 +18,8 @@ button,input,select,textarea{font:inherit;color:inherit}
 .hidden{display:none!important}
 header{position:sticky;top:0;z-index:5;background:var(--pri);color:#fff;padding:12px 16px;padding-top:calc(12px + env(safe-area-inset-top));display:flex;align-items:center;gap:10px}
 @media (prefers-color-scheme:dark){header{background:#16324D}}
-header h1{font-size:17px;margin:0;flex:1}
+header h1{font-size:17px;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header #backBtn{font-size:20px;line-height:1;padding:5px 11px}
 header button{background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer}
 main{max-width:720px;margin:0 auto;padding:14px 16px 96px}
 nav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:5}
@@ -111,7 +112,7 @@ input:focus,select:focus{outline:2px solid var(--pri2);border-color:transparent}
 <body>
 <div id="lock" class="lock"></div>
 <div id="app" class="hidden">
-  <header><h1 id="ttl">Roni Hisab</h1><button id="setBtn" aria-label="সেটিংস">⚙️</button><button id="lockBtn" aria-label="লক করুন">🔒 লক</button></header>
+  <header><button id="backBtn" class="hidden" aria-label="পেছনে যান">←</button><h1 id="ttl">Roni Hisab</h1><button id="setBtn" aria-label="সেটিংস">⚙️</button><button id="lockBtn" aria-label="লক করুন">🔒 লক</button></header>
   <main id="view"></main>
   <button class="fab hidden" id="fab" aria-label="নতুন যোগ">＋</button>
   <nav id="nav"></nav>
@@ -670,14 +671,29 @@ function monthSum(ym){
 let PAGE='home', YM=today().slice(0,7);
 function startApp(){
   initMenu();$('#lock').classList.add('hidden');$('#app').classList.remove('hidden');lastAct=Date.now();
-  ensureIds();if(!PG[PAGE]&&!SEC[PAGE])PAGE='home';go(PAGE);
+  ensureIds();if(!PG[PAGE]&&!SEC[PAGE])PAGE='home';HIST=[];go(PAGE,true);
 }
 const PG={home:()=>home(),daily:()=>daily(),settings:()=>settings(),menu:()=>menuPage(),menuedit:()=>menuEdit(),funds:()=>fundsPage(),recurring:()=>recurringPage(),reports:()=>reportsPage()};
-function go(p){
-  if(!PG[p]&&!SEC[p])p='home';PAGE=p;
+let HIST=[],exitAt=0;
+function go(p,back){
+  if(!PG[p]&&!SEC[p])p='home';
+  if(!back&&p!==PAGE&&DATA){if(p==='home')HIST=[];else{HIST.push(PAGE);if(HIST.length>30)HIST.shift()}}
+  PAGE=p;
   $('#fab').classList.toggle('hidden',!(p==='home'||p==='daily'||SEC[p]));
+  $('#backBtn').classList.toggle('hidden',p==='home');
   renderNav();(PG[p]||(()=>listPage(p)))();window.scrollTo(0,0);
 }
+/* back: close calendar → close form → previous screen → home → (home) press twice to exit */
+function goBack(){
+  if(DP){closeDP();return}
+  if(!$('#modal').classList.contains('hidden')){const c=$('#cx');if(c)c.click();else closeModal();return}
+  if(!KEY){NATIVE&&window.Capacitor.Plugins.App&&window.Capacitor.Plugins.App.exitApp();return}
+  while(HIST.length){const prev=HIST.pop();if(prev!==PAGE&&(PG[prev]||SEC[prev])){go(prev,true);return}}
+  if(PAGE!=='home'){go('home',true);return}
+  if(NATIVE){if(Date.now()-exitAt<2000){window.Capacitor.Plugins.App.exitApp();return}exitAt=Date.now();toast('আবার চাপলে অ্যাপ বন্ধ হবে')}
+}
+$('#backBtn').onclick=goBack;
+try{if(NATIVE&&window.Capacitor.Plugins.App)window.Capacitor.Plugins.App.addListener('backButton',()=>{lastAct=Date.now();goBack()})}catch(e){}
 $('#lockBtn').onclick=()=>showLock(true);$('#setBtn').onclick=()=>go('settings');
 $('#fab').onclick=()=>{if(PAGE==='daily'||PAGE==='home')txForm();else if(SEC[PAGE])editItem(PAGE)};
 
