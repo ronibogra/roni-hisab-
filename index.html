@@ -87,6 +87,22 @@ input:focus,select:focus{outline:2px solid var(--pri2);border-color:transparent}
 .dpg button.fri{color:var(--exp)}
 .dpf{display:flex;gap:8px;margin-top:12px}.dpf .btn{flex:1;padding:10px}
 .imgs{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.th.pdf,.pp.pdf{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:4px}.th.pdf small{font-size:10px;line-height:1.2;word-break:break-all;max-height:2.5em;overflow:hidden}
+.th>span,.pp>span{display:flex;width:100%;height:100%;align-items:center;justify-content:center}
+.pp{position:relative;width:96px;height:128px;border-radius:10px;overflow:hidden;border:1px solid var(--line);background:var(--chip);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.pp.empty{font-size:44px;cursor:default}.pp img{width:100%;height:100%;object-fit:cover;display:block}.pp.big{width:84px;height:112px;flex:none;cursor:default}
+.av{width:40px;height:40px;border-radius:50%;overflow:hidden;flex:none;background:var(--chip);display:flex;align-items:center;justify-content:center;font-size:22px}
+.av img{width:100%;height:100%;object-fit:cover}
+.tline{position:relative;padding-left:0}
+.tnode{position:relative;margin:0 0 18px;padding:10px;border:1px solid var(--line);border-radius:14px;background:var(--card)}
+.tnode:not(:last-child)::after{content:'';position:absolute;left:50%;bottom:-19px;width:2px;height:18px;background:var(--pri2)}
+.tpair{display:flex;flex-wrap:wrap;gap:8px}.tkids{display:flex;flex-wrap:wrap;gap:8px}
+.tp{display:flex;align-items:center;gap:8px;flex:1;min-width:140px;cursor:pointer;padding:4px;border-radius:10px}
+.tp div{min-width:0}.tp b{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tp small{color:var(--mute);font-size:11px}
+.tp.sp{border-left:2px dashed var(--line);padding-left:10px}
+.tadd{display:block;width:100%;margin:0 0 18px;padding:12px;border:2px dashed var(--pri2);border-radius:14px;background:none;color:var(--pri);cursor:pointer;position:relative;font-size:14px}
+.tadd::after{content:'';position:absolute;left:50%;bottom:-19px;width:2px;height:18px;background:var(--pri2)}
+.tchip{border:1px solid var(--line);background:var(--card);border-radius:20px;padding:5px 11px;cursor:pointer;font-size:13px}
 .th{position:relative;width:84px;height:84px;border-radius:10px;overflow:hidden;border:1px solid var(--line);background:var(--chip);cursor:pointer}
 .th img{width:100%;height:100%;object-fit:cover;display:block}
 .thx{position:absolute;top:3px;right:3px;width:26px;height:26px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:12px;cursor:pointer}
@@ -184,7 +200,7 @@ function mask(v){v=String(v||'');if(!v)return'';return v.length<=4?'••••
 /* ================= secure vault ================= */
 const VKEY='roniHisab.vault.v1', ITER=310000;
 let KEY=null, SALT=null, DATA=null;
-const blank=()=>({banks:[],mobile:[],tx:[],savings:[],loans:[],recv:[],online:[],property:[],family:[],children:[],parents:[],meds:[],checkups:[],funds:[],recurring:[],
+const blank=()=>({banks:[],mobile:[],tx:[],savings:[],loans:[],recv:[],online:[],property:[],family:[],tree:[],children:[],parents:[],meds:[],checkups:[],funds:[],recurring:[],
   settings:{lockMin:5,zIncRecv:false,zSubLoan:false,zRate:2.5}});
 async function deriveKey(pw,salt){
   const base=await crypto.subtle.importKey('raw',enc.encode(pw),'PBKDF2',false,['deriveKey']);
@@ -333,61 +349,90 @@ function famInfo(r){
   return [meds?'💊 '+meds+'টি ওষুধ':'',nx?'🩺 '+fmtDate(nx):''].filter(Boolean).join(' · ');
 }
 
-/* ================= encrypted photo store (IndexedDB, AES-GCM with the vault key) ================= */
+/* ================= encrypted file store (photos + PDF) in IndexedDB, AES-GCM with the vault key ================= */
 const IDB={p:null,
   open(){return this.p||(this.p=new Promise((ok,no)=>{const q=indexedDB.open('roniHisabImg',1);q.onupgradeneeded=()=>q.result.createObjectStore('img');q.onsuccess=()=>ok(q.result);q.onerror=()=>{this.p=null;no(q.error)}}))},
   async run(mode,fn){const db=await this.open();return new Promise((ok,no)=>{const t=db.transaction('img',mode),r=fn(t.objectStore('img'));t.oncomplete=()=>ok(r&&r.result);t.onerror=t.onabort=()=>no(t.error)})},
   put(k,v){return this.run('readwrite',s=>s.put(v,k))},get(k){return this.run('readonly',s=>s.get(k))},del(k){return this.run('readwrite',s=>s.delete(k))},
   keys(){return this.run('readonly',s=>s.getAllKeys())},clear(){return this.run('readwrite',s=>s.clear())}};
+const FILE_T=new Set(['images','files','photo']);
+const isFileField=f=>FILE_T.has(f.t);
 const imgIds=v=>Array.isArray(v)?v.filter(x=>typeof x==='string'&&x.startsWith('img_')):[];
-async function imgPutId(id,bytes,key){const iv=crypto.getRandomValues(new Uint8Array(12));const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key||KEY,bytes);await IDB.put(id,{iv,ct,t:'image/jpeg'});return id}
-const imgSave=bytes=>imgPutId('img_'+uid(),bytes);
+async function imgPutId(id,bytes,key,t,n){const iv=crypto.getRandomValues(new Uint8Array(12));const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key||KEY,bytes);await IDB.put(id,{iv,ct,t:t||'image/jpeg',n:n||''});return id}
+const fileSave=(bytes,t,n)=>imgPutId('img_'+uid(),bytes,null,t,n);
+async function fileMeta(id){const v=await IDB.get(id);return v?{t:v.t||'image/jpeg',n:v.n||''}:null}
 async function imgBytes(id,key){const v=await IDB.get(id);if(!v)return null;return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:v.iv},key||KEY,v.ct))}
-async function imgURL(id){const b=await imgBytes(id);return b?URL.createObjectURL(new Blob([b],{type:'image/jpeg'})):null}
+async function imgURL(id){const v=await IDB.get(id);if(!v)return null;const b=await crypto.subtle.decrypt({name:'AES-GCM',iv:v.iv},KEY,v.ct);return URL.createObjectURL(new Blob([b],{type:v.t||'image/jpeg'}))}
 function usedImgIds(){return new Set(DATA?(JSON.stringify(DATA).match(/img_\d+-\d+/g)||[]):[])}
 async function gcImages(){try{if(!DATA)return;const used=usedImgIds();for(const k of await IDB.keys())if(!used.has(k))await IDB.del(k)}catch(e){}}
-async function reencImages(a,b){for(const id of await IDB.keys()){try{const v=await IDB.get(id);const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:v.iv},a,v.ct);await imgPutId(id,pt,b)}catch(e){}}}
-async function compressImg(src){
+async function reencImages(a,b){for(const id of await IDB.keys()){try{const v=await IDB.get(id);const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:v.iv},a,v.ct);await imgPutId(id,pt,b,v.t,v.n)}catch(e){}}}
+const isPdf=f=>f&&(/pdf/i.test(f.type||'')||/\.pdf$/i.test(f.name||''));
+async function compressImg(src,crop){
   const url=typeof src==='string'?src:URL.createObjectURL(src);
   try{
     const im=await new Promise((ok,no)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=()=>no(new Error('ছবিটি খোলা যায়নি'));i.src=url});
-    const M=1600,sc=Math.min(1,M/Math.max(im.naturalWidth||1,im.naturalHeight||1));
-    const c=document.createElement('canvas');c.width=Math.max(1,Math.round(im.naturalWidth*sc));c.height=Math.max(1,Math.round(im.naturalHeight*sc));
-    const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(im,0,0,c.width,c.height);
-    const b=await new Promise(ok=>c.toBlob(ok,'image/jpeg',0.75));return new Uint8Array(await b.arrayBuffer());
+    const W=im.naturalWidth||1,H=im.naturalHeight||1;let sx=0,sy=0,sw=W,sh=H,ow,oh;
+    if(crop){const r=crop.w/crop.h;if(W/H>r){sw=Math.round(H*r);sx=Math.round((W-sw)/2)}else{sh=Math.round(W/r);sy=Math.round((H-sh)*0.3)}ow=crop.w;oh=crop.h}
+    else{const sc=Math.min(1,1600/Math.max(W,H));ow=Math.max(1,Math.round(W*sc));oh=Math.max(1,Math.round(H*sc))}
+    const c=document.createElement('canvas');c.width=ow;c.height=oh;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,ow,oh);x.drawImage(im,sx,sy,sw,sh,0,0,ow,oh);
+    const b=await new Promise(ok=>c.toBlob(ok,'image/jpeg',crop?0.85:0.75));return new Uint8Array(await b.arrayBuffer());
   }finally{if(typeof src!=='string')URL.revokeObjectURL(url)}
 }
 let TURLS=[];
-function renderThumbs(box){
-  const ids=(box.dataset.ids||'').split(',').filter(Boolean);
-  box.innerHTML=ids.length?ids.map((id,i)=>`<div class="th" data-i="${i}"><img alt="" data-img="${esc(id)}"><button type="button" class="thx" data-rm="${i}" aria-label="সরান">✕</button></div>`).join(''):'<p class="muted" style="margin:4px 0">এখনো কোনো ছবি নেই</p>';
-  box.querySelectorAll('img[data-img]').forEach(async im=>{const u=await imgURL(im.dataset.img).catch(()=>null);if(u){TURLS.push(u);im.src=u}else im.alt='⚠'});
-  box.querySelectorAll('.th').forEach(t=>t.onclick=e=>{
-    if(e.target.dataset.rm!=null){e.stopPropagation();if(!confirm('ছবিটি সরাবেন?'))return;ids.splice(+e.target.dataset.rm,1);box.dataset.ids=ids.join(',');renderThumbs(box);return}
+async function renderThumbs(box){
+  const ids=(box.dataset.ids||'').split(',').filter(Boolean),single=!!box.dataset.single;
+  if(!ids.length){box.innerHTML=single?'<div class="pp empty">👤</div>':'<p class="muted" style="margin:4px 0">এখনো কিছু যোগ করা হয়নি</p>';return}
+  box.innerHTML=ids.map((id,i)=>`<div class="${single?'pp':'th'}" data-i="${i}" data-id="${esc(id)}"><span class="muted">…</span><button type="button" class="thx" data-rm="${i}" aria-label="সরান">✕</button></div>`).join('');
+  box.querySelectorAll('[data-id]').forEach(async el=>{const id=el.dataset.id,m=await fileMeta(id).catch(()=>null),sp=el.querySelector('span');
+    if(!m){sp.textContent='⚠';return}
+    if(/pdf/i.test(m.t)){el.classList.add('pdf');sp.innerHTML=`<b style="font-size:26px">📄</b><small>${esc(m.n||'PDF')}</small>`;return}
+    const u=await imgURL(id).catch(()=>null);if(u){TURLS.push(u);sp.outerHTML=`<img alt="" src="${u}">`}else sp.textContent='⚠'});
+  box.querySelectorAll('[data-i]').forEach(t=>t.onclick=e=>{
+    if(e.target.dataset.rm!=null){e.stopPropagation();if(!confirm('এটি সরাবেন?'))return;ids.splice(+e.target.dataset.rm,1);box.dataset.ids=ids.join(',');renderThumbs(box);return}
     viewImages(ids,+t.dataset.i)});
 }
-async function addImages(box,srcs){
-  const ids=(box.dataset.ids||'').split(',').filter(Boolean);let n=0;
-  box.insertAdjacentHTML('beforeend','<p class="muted" style="margin:4px 0" data-busy>ছবি যোগ হচ্ছে…</p>');
-  for(const s of srcs){try{ids.push(await imgSave(await compressImg(s)));n++}catch(e){toast('ছবি যোগ করা যায়নি: '+(e&&e.message||e))}}
-  box.dataset.ids=ids.join(',');renderThumbs(box);if(n)toast(n+'টি ছবি যোগ হয়েছে — সংরক্ষণ চাপুন');
+async function addFiles(box,srcs){
+  const single=!!box.dataset.single,crop=box.dataset.crop==='passport'?{w:600,h:800}:null,allowPdf=!single;
+  let ids=single?[]:(box.dataset.ids||'').split(',').filter(Boolean),n=0;
+  box.insertAdjacentHTML('beforeend','<p class="muted" style="margin:4px 0">যোগ হচ্ছে…</p>');
+  for(const s of srcs){try{
+    if(typeof s!=='string'&&isPdf(s)){
+      if(!allowPdf)throw new Error('এখানে শুধু ছবি দেওয়া যায়');
+      if(s.size>25*1024*1024)throw new Error('PDF ২৫ MB-এর বেশি বড়');
+      ids.push(await fileSave(new Uint8Array(await s.arrayBuffer()),'application/pdf',s.name));
+    }else ids.push(await fileSave(await compressImg(s,crop),'image/jpeg',typeof s==='string'?'':(s.name||'')));
+    n++;if(single)break}catch(e){toast('যোগ করা যায়নি: '+(e&&e.message||e))}}
+  if(single&&!n)ids=(box.dataset.ids||'').split(',').filter(Boolean);
+  box.dataset.ids=ids.join(',');renderThumbs(box);if(n)toast((single?'ছবি':n+'টি ফাইল')+' যোগ হয়েছে — সংরক্ষণ চাপুন');
 }
 function bindImgFields(){document.querySelectorAll('#sheet .imgs').forEach(box=>{
   renderThumbs(box);const id=box.id;
   const fi=document.querySelector(`[data-file="${id}"]`),ci=document.querySelector(`[data-camfile="${id}"]`);
-  const onFiles=e=>{PICKING=0;lastAct=Date.now();const fs=[...e.target.files].filter(f=>/^image\//.test(f.type)||/\.(jpe?g|png|webp|heic|gif|bmp)$/i.test(f.name));e.target.value='';
-    if(fs.length)addImages(box,fs);else if(e.target.files&&e.target.files.length)toast('শুধু ছবি যোগ করা যায়')};
+  const onFiles=e=>{PICKING=0;lastAct=Date.now();const all=[...(e.target.files||[])];e.target.value='';
+    const fs=all.filter(f=>/^image\//.test(f.type)||/\.(jpe?g|png|webp|heic|gif|bmp)$/i.test(f.name)||(!box.dataset.single&&isPdf(f)));
+    if(fs.length)addFiles(box,fs);else if(all.length)toast(box.dataset.single?'শুধু ছবি দেওয়া যায়':'শুধু ছবি বা PDF দেওয়া যায়')};
   fi.onchange=onFiles;ci.onchange=onFiles;
   document.querySelector(`[data-pick="${id}"]`).onclick=()=>{PICKING=Date.now();fi.click()};
   document.querySelector(`[data-cam="${id}"]`).onclick=async()=>{
     const Cam=NATIVE&&window.Capacitor.Plugins.Camera;
     if(!Cam){PICKING=Date.now();ci.click();return}
     PICKING=Date.now();
-    try{const p=await Cam.getPhoto({source:'CAMERA',resultType:'base64',quality:80,width:1600,correctOrientation:true,saveToGallery:false,allowEditing:false});
-      await addImages(box,['data:image/'+(p.format||'jpeg')+';base64,'+p.base64String])}
+    try{const p=await Cam.getPhoto({source:'CAMERA',resultType:'base64',quality:85,width:1600,correctOrientation:true,saveToGallery:false,allowEditing:false});
+      await addFiles(box,['data:image/'+(p.format||'jpeg')+';base64,'+p.base64String])}
     catch(e){if(!/cancel/i.test(String(e&&e.message||e)))toast('ক্যামেরা খোলা যায়নি: '+(e&&e.message||e))}
     finally{PICKING=0;lastAct=Date.now()}};
 })}
+async function openFileId(id){
+  const m=await fileMeta(id),b=await imgBytes(id);if(!b||!m)return toast('ফাইলটি পাওয়া যায়নি');
+  const name=(m.n&&/\.\w+$/.test(m.n)?m.n:(m.n||'document')+(/pdf/i.test(m.t)?'.pdf':'.jpg')).replace(/[\\/:*?"<>|]/g,'_');
+  if(NATIVE){const P=window.Capacitor.Plugins;
+    try{PICKING=Date.now();const w=await P.Filesystem.writeFile({path:name,data:bytesToB64(b),directory:'CACHE'});
+      if(P.FileOpener){try{await P.FileOpener.openFile({path:w.uri,mimeType:m.t});return}catch(e){if(/no.*activity|not found|unable/i.test(String(e&&e.message||e)))toast('এটি খোলার অ্যাপ নেই — শেয়ার করে খুলুন');else throw e}}
+      await P.Share.share({title:name,files:[w.uri]});
+    }catch(e){if(!/cancel/i.test(String(e&&e.message||e)))toast('খোলা যায়নি: '+(e&&e.message||e))}finally{PICKING=0;lastAct=Date.now()}
+    return}
+  download(new Blob([b],{type:m.t}),name);
+}
 let IV=null;
 function viewImages(ids,i){
   if(!ids.length)return;IV={ids,i:i||0,urls:{}};
@@ -395,24 +440,184 @@ function viewImages(ids,i){
   ov.classList.remove('hidden');drawIV();
 }
 async function drawIV(){
-  const ov=$('#iv'),cur=IV,{ids,i}=cur;
+  const ov=$('#iv'),cur=IV,{ids,i}=cur,id=ids[i];
   ov.innerHTML=`<div class="ivbar"><button data-a="x" aria-label="বন্ধ">✕</button><span>${i+1} / ${ids.length}</span><button data-a="z" aria-label="বড় করুন">🔍</button><button data-a="s" aria-label="শেয়ার / সেভ">📤</button></div>
    <div class="ivimg" id="ivimg"><p style="color:#bbb">লোড হচ্ছে…</p></div>
    ${ids.length>1?'<button class="ivnav l" data-a="p" aria-label="আগের">‹</button><button class="ivnav r" data-a="n" aria-label="পরের">›</button>':''}`;
   ov.querySelectorAll('[data-a]').forEach(b=>b.onclick=async()=>{const a=b.dataset.a;
     if(a==='x')closeIV();else if(a==='p'){IV.i=(IV.i-1+ids.length)%ids.length;drawIV()}else if(a==='n'){IV.i=(IV.i+1)%ids.length;drawIV()}
-    else if(a==='z')$('#ivimg').classList.toggle('zoom');
-    else if(a==='s'){const by=await imgBytes(ids[IV.i]).catch(()=>null);if(by)download(new Blob([by],{type:'image/jpeg'}),'prescription-'+today()+'-'+(IV.i+1)+'.jpg')}});
-  const id=ids[i];let u=cur.urls[id];if(!u){u=await imgURL(id).catch(()=>null);if(u)cur.urls[id]=u}
-  if(IV!==cur||IV.i!==i)return;const box=$('#ivimg');if(!box)return;
-  box.innerHTML=u?`<img src="${u}" alt="প্রেসক্রিপশন">`:'<p style="color:#f88">ছবিটি পাওয়া যায়নি</p>';
+    else if(a==='z')$('#ivimg').classList.toggle('zoom');else if(a==='s')openFileId(ids[IV.i])});
+  const m=await fileMeta(id).catch(()=>null);if(IV!==cur||IV.i!==i)return;const box=$('#ivimg');if(!box)return;
+  if(!m){box.innerHTML='<p style="color:#f88">ফাইলটি পাওয়া যায়নি</p>';return}
+  if(/pdf/i.test(m.t)){
+    box.innerHTML=`<div style="text-align:center;color:#fff;padding:20px"><div style="font-size:64px">📄</div><p>${esc(m.n||'PDF ফাইল')}</p><button class="btn" id="ivopen">PDF খুলুন</button><p style="color:#aaa;font-size:12px;margin-top:10px">ফোনের PDF অ্যাপে খুলবে</p></div>`;
+    $('#ivopen').onclick=()=>openFileId(id);return}
+  let u=cur.urls[id];if(!u){u=await imgURL(id).catch(()=>null);if(u)cur.urls[id]=u}
+  if(IV!==cur||IV.i!==i)return;
+  box.innerHTML=u?`<img src="${u}" alt="">`:'<p style="color:#f88">ছবিটি পাওয়া যায়নি</p>';
 }
 function closeIV(){const o=$('#iv');if(o){o.classList.add('hidden');o.innerHTML=''}if(IV)Object.values(IV.urls).forEach(u=>URL.revokeObjectURL(u));IV=null}
 function bytesToB64(u){let s='';for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s)}
 async function backupJSON(){
-  const img={};for(const id of usedImgIds()){const b=await imgBytes(id).catch(()=>null);if(b)img[id]=bytesToB64(b)}
+  const img={};for(const id of usedImgIds()){const v=await IDB.get(id).catch(()=>null);if(!v)continue;const b=await imgBytes(id).catch(()=>null);if(b)img[id]={b:bytesToB64(b),t:v.t||'image/jpeg',n:v.n||''}}
   return JSON.stringify(await sealWith(KEY,SALT,Object.assign({},DATA,{__img:img})));
 }
+/* small avatars in lists */
+let AVURLS=[];
+function loadAvatars(){AVURLS.forEach(u=>URL.revokeObjectURL(u));AVURLS=[];
+  document.querySelectorAll('[data-av]').forEach(async el=>{const u=await imgURL(el.dataset.av).catch(()=>null);if(u&&el.isConnected){AVURLS.push(u);el.innerHTML=`<img alt="" src="${u}">`}})}
+
+/* ================= বংশ তালিকা (family tree, any number of generations) ================= */
+const BND=n=>String(n).replace(/\d/g,d=>'০১২৩৪৫৬৭৮৯'[d]);
+const ORD=n=>({1:'১ম',2:'২য়',3:'৩য়',4:'৪র্থ',5:'৫ম',6:'৬ষ্ঠ',7:'৭ম',8:'৮ম',9:'৯ম',10:'১০ম'})[n]||BND(n)+'তম';
+let TVIEW='gen',TSIDE='p';
+function treeIndex(){
+  const T=DATA.tree||(DATA.tree=[]),by={};T.forEach(p=>by[p.id]=p);
+  const kids={},sp={};
+  T.forEach(p=>{[p.fatherId,p.motherId].forEach(q=>{if(q&&by[q]){(kids[q]=kids[q]||[]);if(!kids[q].includes(p.id))kids[q].push(p.id)}});
+    if(p.spouseId&&by[p.spouseId]){(sp[p.id]=sp[p.id]||new Set()).add(p.spouseId);(sp[p.spouseId]=sp[p.spouseId]||new Set()).add(p.id)}});
+  const root=T.find(p=>p.me)||null,gen={},anc={},desc={};
+  if(root){gen[root.id]=0;const q=[root.id];
+    while(q.length){const id=q.shift(),p=by[id],g=gen[id];
+      [[p.fatherId,g+1],[p.motherId,g+1],...[...(sp[id]||[])].map(s=>[s,g]),...(kids[id]||[]).map(k=>[k,g-1])].forEach(([n,ng])=>{if(n&&by[n]&&gen[n]==null){gen[n]=ng;q.push(n)}})}
+    const walk=(id,g,side)=>{const p=by[id];[['fatherId',side||'p'],['motherId',side||'m']].forEach(([k,s])=>{const a=p[k];if(a&&by[a]&&!anc[a]){anc[a]={g:g+1,side:s};walk(a,g+1,s)}})};walk(root.id,0,'');
+    const mine=new Set([root.id,...(sp[root.id]||[])]);
+    const dw=(id,g)=>(kids[id]||[]).forEach(k=>{if(desc[k]==null){desc[k]=g-1;dw(k,g-1)}});mine.forEach(id=>dw(id,0));
+  }
+  return {T,by,kids,sp,root,gen,anc,desc,memo:{}};
+}
+function relLabel(id,I,depth){
+  if(I.memo[id]!=null)return I.memo[id];depth=depth||0;
+  const p=I.by[id],f=p.gender==='মহিলা',r=I.root;let L='';
+  if(!r)L='';
+  else if(p.me)L='আমি';
+  else if((I.sp[r.id]||new Set()).has(id))L=f?'স্ত্রী':'স্বামী';
+  else if(I.anc[id]){const{g,side}=I.anc[id],P=side==='p';
+    L=g===1?(f?'মা':'বাবা'):g===2?(P?(f?'দাদি':'দাদা'):(f?'নানি':'নানা')):g===3?(P?(f?'পরদাদি':'পরদাদা'):(f?'পরনানি':'পরনানা')):`${ORD(g)} পুরুষ পূর্বপুরুষ (${P?'বাবার':'মায়ের'} দিক)`}
+  else if(I.desc[id]!=null){const d=-I.desc[id];L=d===1?(f?'মেয়ে':'ছেলে'):d===2?(f?'নাতনি':'নাতি'):d===3?(f?'পুতনি':'পুতি'):`${ORD(d)} প্রজন্ম পরের বংশধর`}
+  else if(depth<6){
+    const par=[p.fatherId,p.motherId].filter(q=>q&&I.by[q]);
+    const aPar=par.find(q=>I.anc[q]||q===r.id);
+    if(aPar&&I.anc[aPar]){const{g,side}=I.anc[aPar],P=side==='p';
+      if(g===1)L=f?'বোন':'ভাই';
+      else if(g===2)L=P?(f?'ফুফু':'চাচা'):(f?'খালা':'মামা');
+      else{const onLine=(I.kids[aPar]||[]).find(k=>I.anc[k]);L=onLine?`${relLabel(onLine,I,depth+1)}র ${f?'বোন':'ভাই'}`:`${ORD(g-1)} পুরুষ আগের আত্মীয়`}}
+    else if(par.length){const pl=relLabel(par[0],I,depth+1),q=I.by[par[0]];
+      const MAP={'ভাই':f?'ভাতিজি':'ভাতিজা','বোন':f?'ভাগ্নি':'ভাগ্নে','চাচা':(f?'চাচাতো বোন':'চাচাতো ভাই'),'চাচি':(f?'চাচাতো বোন':'চাচাতো ভাই'),'ফুফু':(f?'ফুফাতো বোন':'ফুফাতো ভাই'),'ফুফা':(f?'ফুফাতো বোন':'ফুফাতো ভাই'),'মামা':(f?'মামাতো বোন':'মামাতো ভাই'),'মামি':(f?'মামাতো বোন':'মামাতো ভাই'),'খালা':(f?'খালাতো বোন':'খালাতো ভাই'),'খালু':(f?'খালাতো বোন':'খালাতো ভাই')};
+      L=MAP[pl]||(pl?`${pl}র ${f?'মেয়ে':'ছেলে'}`:'')}
+    if(!L){const s=[...(I.sp[id]||[])].find(x=>x!==id);if(s){const sl=relLabel(s,I,depth+1);
+      const SP={'চাচা':'চাচি','ফুফু':'ফুফা','মামা':'মামি','খালা':'খালু','ভাই':'ভাবি','বোন':'দুলাভাই','ছেলে':'পুত্রবধূ','মেয়ে':'জামাই','নাতি':'নাতবউ','নাতনি':'নাতজামাই'};
+      L=SP[sl]||(sl?`${sl}র ${f?'স্ত্রী':'স্বামী'}`:'')}}
+  }
+  return I.memo[id]=L;
+}
+function genTitle(g){if(g==null)return'অন্যান্য (এখনো সম্পর্ক জোড়া হয়নি)';
+  if(g===0)return'আমার প্রজন্ম — আমি, স্ত্রী, ভাই-বোন';if(g===1)return'১ম পুরুষ আগে — বাবা-মা, চাচা, মামা';if(g===2)return'২য় পুরুষ আগে — দাদা-দাদি, নানা-নানি';
+  if(g===3)return'৩য় পুরুষ আগে — পরদাদা-পরদাদি';if(g>0)return`${ORD(g)} পুরুষ আগে`;
+  if(g===-1)return'সন্তান';if(g===-2)return'নাতি-নাতনি';if(g===-3)return'পুতি-পুতনি';return`${ORD(-g)} প্রজন্ম পরে`}
+const yrs=p=>{const b=(p.born||'').slice(0,4),d=(p.died||'').slice(0,4);return b||d?`${b||'?'}${p.alive==='মৃত'||d?' – '+(d||'?'):''}`:''};
+const tAv=p=>{const ph=imgIds(p.photo)[0];return `<span class="av" ${ph?`data-av="${esc(ph)}"`:''}>${p.gender==='মহিলা'?'👩':'👨'}</span>`};
+function treePage(){
+  $('#ttl').textContent=mName('tree');const I=treeIndex(),T=I.T;
+  if(!T.length){
+    $('#view').innerHTML=`<div class="card" style="text-align:center"><div style="font-size:52px">🌳</div><h3 style="margin:6px 0">বংশ তালিকা শুরু করুন</h3>
+     <p class="muted">নিজেকে দিয়ে শুরু করুন। তারপর বাবা → দাদা → পরদাদা… যত প্রজন্ম জানা আছে যোগ করুন। কে আপনার কী হন — অ্যাপ নিজেই হিসাব করবে।</p>
+     <button class="btn full" id="tstart">শুরু করুন${DATA.family.length?' — ফ্যামিলি থেকে নিয়ে':''}</button></div>`;
+    $('#tstart').onclick=async()=>{seedTree();await save();treePage();toast('শুরু হয়েছে — নিজের নাম দিন')};return}
+  const gens=Object.values(I.gen),maxA=Math.max(0,...Object.values(I.anc).map(a=>a.g)),maxD=Math.max(0,...Object.values(I.desc).map(d=>-d));
+  const span=maxA+1+maxD;
+  let body='';
+  if(TVIEW==='gen'){
+    const groups={};T.forEach(p=>{const g=I.gen[p.id];(groups[g==null?'x':g]=groups[g==null?'x':g]||[]).push(p)});
+    const order=Object.keys(groups).filter(k=>k!=='x').map(Number).sort((a,b)=>b-a);if(groups.x)order.push('x');
+    body=order.map(g=>`<h2>${esc(genTitle(g==='x'?null:g))} <small class="muted">(${BND(groups[g].length)} জন)</small></h2><div class="card">${groups[g].map(p=>`
+      <div class="row tap" data-tp="${esc(p.id)}">${tAv(p)}<div class="t"><div>${esc(p.name||'—')}${p.alive==='মৃত'?' <small class="muted">(মরহুম)</small>':''}</div>
+      <small>${esc([relLabel(p.id,I),yrs(p),p.place].filter(Boolean).join(' · '))}</small></div><div class="a" style="font-weight:400;color:var(--mute)">›</div></div>`).join('')}</div>`).join('');
+  }else{
+    const r=I.root;let chain=[],cur=r?(TSIDE==='p'?I.by[r.fatherId]:I.by[r.motherId]):null;
+    while(cur&&chain.length<60){chain.unshift(cur);cur=I.by[cur.fatherId]}
+    const couple=p=>{const s=[...(I.sp[p.id]||[])].map(x=>I.by[x]);const sib=new Set();[p.fatherId,p.motherId].forEach(q=>(I.kids[q]||[]).forEach(k=>{if(k!==p.id)sib.add(k)}));
+      return `<div class="tnode"><div class="tpair"><div class="tp" data-tp="${esc(p.id)}">${tAv(p)}<div><b>${esc(p.name||'—')}</b><small>${esc([relLabel(p.id,I),yrs(p)].filter(Boolean).join(' · '))}</small></div></div>
+        ${s.map(x=>`<div class="tp sp" data-tp="${esc(x.id)}">${tAv(x)}<div><b>${esc(x.name||'—')}</b><small>${esc(relLabel(x.id,I)||'স্ত্রী')}</small></div></div>`).join('')}</div>
+        ${sib.size?`<small class="muted">＋ ${BND(sib.size)} জন ভাই-বোন</small>`:''}</div>`};
+    const top=chain[0]||null;
+    body=`<div class="seg" style="margin-top:4px"><button data-ts="p" class="${TSIDE==='p'?'on':''}">বাবার বংশ (দাদা)</button><button data-ts="m" class="${TSIDE==='m'?'on':''}">মায়ের বংশ (নানা)</button></div>
+      <div class="tline">${top||r?`<button class="tadd" data-tadd="${esc((top||r).id)}" data-k="${top?'fatherId':TSIDE==='p'?'fatherId':'motherId'}">＋ ${top?esc(top.name||'')+'র বাবা যোগ করুন':TSIDE==='p'?'বাবা যোগ করুন':'মা যোগ করুন'}</button>`:''}
+      ${chain.map(couple).join('')}${r?couple(r):''}
+      ${r?`<div class="tnode"><div class="tkids">${(I.kids[r.id]||[]).map(k=>I.by[k]).map(k=>`<div class="tp" data-tp="${esc(k.id)}">${tAv(k)}<div><b>${esc(k.name||'—')}</b><small>${esc(relLabel(k.id,I))}</small></div></div>`).join('')||'<small class="muted">সন্তান যোগ করতে নিজের নামে চাপুন</small>'}</div></div>`:''}</div>`;
+  }
+  $('#view').innerHTML=`<div class="stat" style="margin-bottom:10px"><small>বংশ তালিকা</small><b>${BND(T.length)} জন · ${BND(span)} প্রজন্ম</b>
+     <small>পূর্বপুরুষ জানা আছে ${BND(maxA)} পুরুষ পর্যন্ত${maxA<7?' — লক্ষ্য কমপক্ষে ৭ পুরুষ':' ✓'}</small>
+     <div class="bar" style="margin-top:6px"><i style="width:${Math.min(100,maxA/7*100)}%;background:var(--inc)"></i></div></div>
+   <div class="seg"><button data-tv="gen" class="${TVIEW==='gen'?'on':''}">প্রজন্ম অনুযায়ী</button><button data-tv="line" class="${TVIEW==='line'?'on':''}">বংশধারা (চার্ট)</button></div>
+   ${body}
+   <button class="btn full ghost" id="tx" style="margin-top:12px">📤 বংশ তালিকা Excel-এ নিন</button>`;
+  document.querySelectorAll('[data-tv]').forEach(b=>b.onclick=()=>{TVIEW=b.dataset.tv;treePage()});
+  document.querySelectorAll('[data-ts]').forEach(b=>b.onclick=()=>{TSIDE=b.dataset.ts;treePage()});
+  document.querySelectorAll('[data-tp]').forEach(b=>b.onclick=()=>treePerson(b.dataset.tp));
+  document.querySelectorAll('[data-tadd]').forEach(b=>b.onclick=()=>treeAdd(b.dataset.tadd,b.dataset.k==='fatherId'?'father':'mother'));
+  $('#tx').onclick=exportTree;loadAvatars();
+}
+function seedTree(){
+  const T=DATA.tree=DATA.tree||[];if(T.length)return;
+  const me={id:uid(),me:true,name:'আমি',gender:'পুরুষ',alive:'জীবিত'};T.push(me);
+  const F_=DATA.family||[],cp=m=>({born:m.dob||'',photo:imgIds(m.photo).slice(0,1),place:m.addr||'',job:m.job||'',alive:'জীবিত'});
+  const fa=F_.find(m=>m.rel==='বাবা'),mo=F_.find(m=>m.rel==='মা'),wi=F_.find(m=>m.rel==='স্ত্রী'||m.rel==='স্বামী');
+  let fid='',mid='',wid='';
+  if(fa){fid=uid();T.push(Object.assign({id:fid,name:fa.name,gender:'পুরুষ'},cp(fa)));me.fatherId=fid}
+  if(mo){mid=uid();T.push(Object.assign({id:mid,name:mo.name,gender:'মহিলা',spouseId:fid},cp(mo)));me.motherId=mid;if(fid)T.find(x=>x.id===fid).spouseId=mid}
+  if(wi){wid=uid();if(wi.rel==='স্বামী')me.gender='মহিলা';T.push(Object.assign({id:wid,name:wi.name,gender:wi.rel==='স্বামী'?'পুরুষ':'মহিলা',spouseId:me.id},cp(wi)));me.spouseId=wid}
+  F_.forEach(m=>{
+    if(KIDS.includes(m.rel)){const k=Object.assign({id:uid(),name:m.name,gender:m.rel==='মেয়ে'?'মহিলা':'পুরুষ'},cp(m));if(me.gender==='মহিলা'){k.motherId=me.id;k.fatherId=wid}else{k.fatherId=me.id;k.motherId=wid}T.push(k)}
+    else if(m.rel==='ভাই'||m.rel==='বোন')T.push(Object.assign({id:uid(),name:m.name,gender:m.rel==='বোন'?'মহিলা':'পুরুষ',fatherId:fid,motherId:mid},cp(m)));
+  });
+}
+function treeAdd(id,kind){
+  const I=treeIndex(),p=I.by[id];if(!p)return;const pre={id:uid(),alive:''};
+  if(kind==='father'){Object.assign(pre,{gender:'পুরুষ',__link:{id,k:'fatherId'}});if(p.motherId)pre.spouseId=p.motherId}
+  else if(kind==='mother'){Object.assign(pre,{gender:'মহিলা',__link:{id,k:'motherId'}});if(p.fatherId)pre.spouseId=p.fatherId}
+  else if(kind==='spouse')Object.assign(pre,{gender:p.gender==='মহিলা'?'পুরুষ':'মহিলা',spouseId:id});
+  else if(kind==='child'){const s=[...(I.sp[id]||[])][0]||'';Object.assign(pre,{gender:'পুরুষ'},p.gender==='মহিলা'?{motherId:id,fatherId:s}:{fatherId:id,motherId:s})}
+  else if(kind==='sibling'){if(!p.fatherId&&!p.motherId){toast('আগে বাবা বা মা যোগ করুন, তাহলে ভাই-বোন জোড়া যাবে');return}Object.assign(pre,{gender:'পুরুষ',fatherId:p.fatherId||'',motherId:p.motherId||''})}
+  DATA.tree.push(pre);editItem('tree',DATA.tree.length-1,true);
+}
+function treePerson(id){
+  const I=treeIndex(),p=I.by[id];if(!p)return;const lab=relLabel(id,I),ph=imgIds(p.photo)[0],docs=imgIds(p.docs);
+  const chip=(q,l)=>q?`<button class="tchip" data-tp2="${esc(q.id)}">${esc(l)}: ${esc(q.name||'—')}</button>`:'';
+  const kids=(I.kids[id]||[]).map(k=>I.by[k]),sib=new Set();[p.fatherId,p.motherId].forEach(q=>(I.kids[q]||[]).forEach(k=>{if(k!==id)sib.add(k)}));
+  const spouses=[...(I.sp[id]||[])].map(x=>I.by[x]);
+  openModal(`<div style="display:flex;gap:14px;align-items:center"><div class="pp big">${ph?`<span data-av="${esc(ph)}"></span>`:`<span style="font-size:44px">${p.gender==='মহিলা'?'👩':'👨'}</span>`}</div>
+     <div><h3 style="margin:0">${esc(p.name||'—')}</h3><div class="muted">${esc(lab||'')}</div><div class="muted">${esc([yrs(p),p.alive==='মৃত'?'মরহুম':p.alive,p.place,p.job].filter(Boolean).join(' · '))}</div></div></div>
+   ${p.note?`<p style="white-space:pre-wrap;margin:12px 0 0">${esc(p.note)}</p>`:''}
+   <div class="chips" style="margin-top:12px">${chip(I.by[p.fatherId],'বাবা')}${chip(I.by[p.motherId],'মা')}${spouses.map(s=>chip(s,p.gender==='মহিলা'?'স্বামী':'স্ত্রী')).join('')}
+     ${kids.map(k=>chip(k,k.gender==='মহিলা'?'মেয়ে':'ছেলে')).join('')}${[...sib].map(s=>chip(I.by[s],I.by[s].gender==='মহিলা'?'বোন':'ভাই')).join('')}</div>
+   ${docs.length?`<button class="btn ghost full" id="tdocs" style="margin-top:10px">📎 ${BND(docs.length)}টি কাগজপত্র দেখুন</button>`:''}
+   <label style="margin-top:14px">যোগ করুন</label><div class="chips">
+     ${p.fatherId?'':'<button data-ta="father">＋ বাবা</button>'}${p.motherId?'':'<button data-ta="mother">＋ মা</button>'}
+     <button data-ta="spouse">＋ ${p.gender==='মহিলা'?'স্বামী':'স্ত্রী'}</button><button data-ta="child">＋ সন্তান</button><button data-ta="sibling">＋ ভাই / বোন</button></div>
+   <div class="acts"><button type="button" class="btn ghost" id="tpx">বন্ধ</button><button class="btn" id="tpe">✏️ সম্পাদনা</button></div>`);
+  loadAvatars();
+  $('#tpx').onclick=closeModal;$('#tpe').onclick=()=>editItem('tree',DATA.tree.indexOf(p));
+  if($('#tdocs'))$('#tdocs').onclick=()=>viewImages(docs,0);
+  document.querySelectorAll('[data-tp2]').forEach(b=>b.onclick=()=>treePerson(b.dataset.tp2));
+  document.querySelectorAll('[data-ta]').forEach(b=>b.onclick=()=>treeAdd(id,b.dataset.ta));
+}
+function treeAfterSave(o){
+  const T=DATA.tree;
+  if(o.__link){const t=T.find(x=>x.id===o.__link.id);if(t)t[o.__link.k]=o.id;delete o.__link}
+  if(o.spouseId){const s=T.find(x=>x.id===o.spouseId);if(s&&!s.spouseId)s.spouseId=o.id}
+  if(o.me)T.forEach(x=>{if(x!==o&&x.me)delete x.me});
+}
+function treeAfterDelete(o){(DATA.tree||[]).forEach(x=>['fatherId','motherId','spouseId'].forEach(k=>{if(x[k]===o.id)x[k]=''}))}
+function treeSheet(wb){
+  const I=treeIndex(),nm=id=>(I.by[id]||{}).name||'';
+  const rows=[...I.T].sort((a,b)=>(I.gen[b.id]??-99)-(I.gen[a.id]??-99)).map(p=>[p.name,p.gender,relLabel(p.id,I),I.gen[p.id]==null?'':genTitle(I.gen[p.id]),nm(p.fatherId),nm(p.motherId),nm(p.spouseId),p.born||'',p.died||'',p.alive||'',p.place||'',p.job||'',p.note||'',imgIds(p.docs).length?imgIds(p.docs).length+'টি কাগজ':'']);
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['নাম','পুরুষ / মহিলা','আমার সাথে সম্পর্ক','প্রজন্ম','বাবা','মা','স্বামী / স্ত্রী','জন্ম','মৃত্যু','অবস্থা','গ্রাম / ঠিকানা','পেশা','নোট','কাগজপত্র'],...rows]),'বংশ তালিকা');
+}
+function exportTree(){const wb=XLSX.utils.book_new();treeSheet(wb);
+  download(new Blob([XLSX.write(wb,{bookType:'xlsx',type:'array'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),'Bongsho-Talika-'+today()+'.xlsx');
+}
+
 
 const dnum=s=>Date.UTC(+s.slice(0,4),+s.slice(5,7)-1,+s.slice(8,10));
 const daysTo=s=>Math.round((dnum(s)-dnum(today()))/864e5);
@@ -627,7 +832,7 @@ const SEC={
    title:r=>r.name,sub:r=>num(r.returned)?'দিয়েছি '+tk(r.given)+' · ফেরত '+tk(r.returned):(r.date?fmtDate(r.date):''),amt:r=>num(r.given)-num(r.returned)},
  property:{name:'বাড়ি ও সম্পত্তি',totLabel:'মোট আনুমানিক মূল্য',fields:[F('kind','ধরণ','select',['বাড়ি','ফ্ল্যাট','জমি','দোকান','গাড়ি','মোটরসাইকেল','স্বর্ণ','আসবাব','ইলেকট্রনিক্স','অন্যান্য']),
    F('name','নাম / বিবরণ (যেমন: উত্তরা ফ্ল্যাট)'),F('value','বর্তমান আনুমানিক মূল্য — নিট সম্পদে এটা যোগ হবে','money'),F('pprice','কেনা দাম','money'),
-   F('loc','ঠিকানা / অবস্থান'),F('size','পরিমাণ (শতাংশ / বর্গফুট / ভরি)'),F('owner','মালিকের নাম'),F('pdate','কেনার তারিখ','date'),F('rent','মাসিক ভাড়া আয়','money'),F('doc','দলিল / রেজিস্ট্রেশন নম্বর','secret'),F('zakat','জাকাতযোগ্য? (স্বর্ণ, ব্যবসার মাল)','select',['না','হ্যাঁ']),F('note','নোট')],
+   F('loc','ঠিকানা / অবস্থান'),F('size','পরিমাণ (শতাংশ / বর্গফুট / ভরি)'),F('owner','মালিকের নাম'),F('pdate','কেনার তারিখ','date'),F('rent','মাসিক ভাড়া আয়','money'),F('doc','দলিল / রেজিস্ট্রেশন নম্বর','secret'),Object.assign(F('docs','দলিল / খতিয়ান / নামজারির ছবি বা PDF','files'),{short:'দলিল'}),F('zakat','জাকাতযোগ্য? (স্বর্ণ, ব্যবসার মাল)','select',['না','হ্যাঁ']),F('note','নোট')],
    title:r=>r.name||r.kind,sub:r=>[r.kind,r.loc,r.size,num(r.rent)?'ভাড়া '+tk(r.rent)+'/মাস':'',!propVal(r)?'⚠ মূল্য দেওয়া নেই — চেপে মূল্য দিন':(!num(r.value)?'কেনা দাম ধরা হয়েছে':'')].filter(Boolean).join(' · '),amt:r=>propVal(r)},
  children:{hidden:true,name:'সন্তান',totLabel:'এ মাসে সন্তানদের জন্য খরচ',fields:[F('name','নাম'),F('gender','ছেলে / মেয়ে','select',['ছেলে','মেয়ে']),F('dob','জন্ম তারিখ','date'),F('school','স্কুল / প্রতিষ্ঠান'),
    F('cls','শ্রেণি'),F('roll','রোল'),F('fee','মাসিক বেতন / নির্দিষ্ট খরচ','money'),F('blood','রক্তের গ্রুপ','select',BLOOD),F('birthNo','জন্ম নিবন্ধন নম্বর','secret'),F('doctor','ডাক্তার / ফোন'),F('note','নোট (এলার্জি, টিকা, শখ…)')],
@@ -639,18 +844,23 @@ const SEC={
    F('cost','মাসিক খরচ','money'),F('until','স্টক শেষ হবে','date'),F('status','অবস্থা','select',['চলমান','বন্ধ']),F('note','নোট')],
    title:r=>r.med,sub:r=>[r.who,r.dose,r.time,r.until?'স্টক: '+fmtDate(r.until):'',r.status==='বন্ধ'?'বন্ধ':''].filter(Boolean).join(' · '),amt:r=>r.status==='বন্ধ'?0:num(r.cost)},
  checkups:{name:'ডাক্তার ও প্রেসক্রিপশন',fields:[F('who','কার','person'),F('doctor','ডাক্তারের নাম'),F('place','হাসপাতাল / চেম্বার'),F('phone','সিরিয়াল ফোন'),F('date','শেষ দেখানো','date'),
-   F('rx','প্রেসক্রিপশন / রিপোর্টের ছবি','images'),F('next','পরের তারিখ','date'),F('fee','ফি','money'),F('note','পরামর্শ / নোট')],
+   Object.assign(F('rx','প্রেসক্রিপশন / রিপোর্ট (ছবি বা PDF)','files'),{short:'প্রেসক্রিপশন'}),F('next','পরের তারিখ','date'),F('fee','ফি','money'),F('note','পরামর্শ / নোট')],
    title:r=>r.doctor||'ডাক্তার',sub:r=>[r.who,r.place,r.date?'শেষ: '+fmtDate(r.date):'',r.next?'পরের: '+fmtDate(r.next):''].filter(Boolean).join(' · ')},
- family:{name:'ফ্যামিলি',totLabel:'এ মাসে পরিবারের জন্য মোট খরচ',fields:[F('name','নাম'),F('rel','সম্পর্ক','select',RELS),F('dob','জন্ম তারিখ','date'),F('phone','মোবাইল'),
+ family:{name:'ফ্যামিলি',totLabel:'এ মাসে পরিবারের জন্য মোট খরচ',avatar:'photo',avIcon:r=>relIcon(r.rel),fields:[F('name','নাম'),F('rel','সম্পর্ক','select',RELS),F('photo','পাসপোর্ট সাইজ ছবি','photo'),F('dob','জন্ম তারিখ','date'),F('phone','মোবাইল'),
    F('blood','রক্তের গ্রুপ','select',BLOOD),F('health','স্বাস্থ্য সমস্যা / এলার্জি (ডায়াবেটিস, প্রেশার…)'),Fo(ADULT,'job','পেশা'),
-   Fo(STUDY,'school','স্কুল / প্রতিষ্ঠান'),Fo(STUDY,'cls','শ্রেণি'),Fo(STUDY,'roll','রোল'),Fo(STUDY,'fee','মাসিক বেতন / পড়ার খরচ','money'),Fo(STUDY,'birthNo','জন্ম নিবন্ধন নম্বর','secret'),
-   Fo(ADULT,'allow','মাসিক হাতখরচ দিই','money'),Fo(ADULT,'nid','NID নম্বর','secret'),F('addr','ঠিকানা'),F('emergency','জরুরি যোগাযোগ'),F('doctor','ডাক্তার / ফোন'),F('note','নোট (টিকা, শখ…)')],
-   title:r=>r.name?relIcon(r.rel)+' '+r.name:'',sub:r=>[r.rel,age(r.dob),r.cls?'শ্রেণি '+r.cls:'',r.blood,r.health,famInfo(r)].filter(Boolean).join(' · '),amt:r=>spentOn(r.name),amtHint:'এ মাসে খরচ',
+   Fo(STUDY,'school','স্কুল / প্রতিষ্ঠান'),Fo(STUDY,'cls','শ্রেণি'),Fo(STUDY,'roll','রোল'),Fo(STUDY,'fee','মাসিক বেতন / পড়ার খরচ','money'),Fo(STUDY,'birthNo','জন্ম নিবন্ধন নম্বর','secret'),Object.assign(Fo(STUDY,'birthDoc','জন্ম নিবন্ধনের ছবি বা PDF','files'),{short:'জন্ম নিবন্ধন'}),
+   Fo(ADULT,'allow','মাসিক হাতখরচ দিই','money'),Fo(ADULT,'nid','NID নম্বর','secret'),Object.assign(Fo(ADULT,'nidDoc','ভোটার আইডি (NID) ছবি বা PDF','files'),{short:'ভোটার আইডি'}),F('addr','ঠিকানা'),F('emergency','জরুরি যোগাযোগ'),F('doctor','ডাক্তার / ফোন'),F('note','নোট (টিকা, শখ…)')],
+   title:r=>r.name||'',sub:r=>[r.rel,age(r.dob),r.cls?'শ্রেণি '+r.cls:'',r.blood,r.health,famInfo(r)].filter(Boolean).join(' · '),amt:r=>spentOn(r.name),amtHint:'এ মাসে খরচ',
    defaults:()=>({rel:FAMF==='kids'?'ছেলে':FAMF==='elders'?'বাবা':FAMF==='other'?'অন্যান্য':'স্ত্রী'}),
    filter:r=>FAMF==='all'||relGroup(r.rel)===FAMF,
    head:()=>`<div class="chips" style="margin:0 0 10px">${FGROUPS.map(g=>{const n=g[0]==='all'?DATA.family.length:DATA.family.filter(x=>relGroup(x.rel)===g[0]).length;return `<button data-fg="${g[0]}" class="${FAMF===g[0]?'on':''}">${g[1]} (${n})</button>`}).join('')}</div>
      <div class="grid" style="margin-bottom:12px"><button class="btn ghost" data-go2="meds">💊 ওষুধ</button><button class="btn ghost" data-go2="checkups">🩺 ডাক্তার ও প্রেসক্রিপশন</button></div>`,
    bind:()=>{document.querySelectorAll('[data-fg]').forEach(b=>b.onclick=()=>{FAMF=b.dataset.fg;listPage('family')});document.querySelectorAll('[data-go2]').forEach(b=>b.onclick=()=>go(b.dataset.go2))}},
+ tree:{name:'বংশ তালিকা',fields:[F('name','নাম'),F('gender','পুরুষ / মহিলা','select',['পুরুষ','মহিলা']),F('photo','ছবি','photo'),
+   F('fatherId','বাবা','tref',{g:'পুরুষ'}),F('motherId','মা','tref',{g:'মহিলা'}),F('spouseId','স্বামী / স্ত্রী','tref',{}),
+   F('born','জন্ম (সাল বা তারিখ, যেমন 1890)'),F('alive','অবস্থা','select',['','জীবিত','মৃত']),F('died','মৃত্যু (সাল বা তারিখ)'),F('place','গ্রাম / ঠিকানা'),F('job','পেশা'),
+   Object.assign(F('docs','কাগজপত্র (ছবি বা PDF)','files'),{short:'কাগজপত্র'}),F('note','নোট / জীবনী')],
+   title:r=>r.name||'',sub:r=>r.place||'',afterSave:o=>treeAfterSave(o),afterDelete:o=>treeAfterDelete(o)},
  funds:{name:'সমিতি / ফান্ড',fields:[F('name','ফান্ডের নাম (যেমন Head Office Somiti)'),F('org','সমিতি / প্রতিষ্ঠান'),F('opening','এই অ্যাপে আনার আগে মোট জমা','money'),
    F('monthly','মাসিক চাঁদা','money'),F('day','প্রতি মাসের কত তারিখে','select',DAYS),F('start','চাঁদা শুরুর মাস','date'),F('profit','মুনাফা / লভ্যাংশ যোগ হয়েছে','money'),
    F('status','অবস্থা','select',['চলমান','বন্ধ']),F('note','নোট')],title:r=>r.name,sub:r=>[r.org,num(r.monthly)?'মাসিক '+tk(r.monthly):''].filter(Boolean).join(' · '),amt:r=>fundBal(r)},
@@ -660,7 +870,7 @@ const SEC={
 };
 
 /* ================= menu ================= */
-const BUILTIN=[['home','হোম','🏠'],['daily','দৈনিক','📒'],['banks','ব্যাংক','🏦'],['savings','সঞ্চয় ও বিনিয়োগ','💰'],['family','ফ্যামিলি','👨‍👩‍👧'],
+const BUILTIN=[['home','হোম','🏠'],['daily','দৈনিক','📒'],['banks','ব্যাংক','🏦'],['savings','সঞ্চয় ও বিনিয়োগ','💰'],['family','ফ্যামিলি','👨‍👩‍👧'],['tree','বংশ তালিকা','🌳'],
 ['property','বাড়ি ও সম্পত্তি','🏡'],['mobile','মোবাইল ব্যাংকিং','📱'],['loans','ঋণ','💳'],['recv','পাওনা','🤝'],
  ['meds','ওষুধ','💊'],['checkups','ডাক্তার ও প্রেসক্রিপশন','🩺'],['online','পাসওয়ার্ড ও ইমেইল','🔐']];
 BUILTIN.splice(2,0,['reports','রিপোর্ট','📊'],['funds','সমিতি / ফান্ড','🏛️'],['recurring','নিয়মিত আয়-ব্যয়','🔁']);
@@ -803,13 +1013,13 @@ function startApp(){
   ensureIds();if(!PG[PAGE]&&!SEC[PAGE])PAGE='home';HIST=[];go(PAGE,true);
   if(mig)save().then(()=>toast('সন্তান ও বাবা-মা এখন "ফ্যামিলি" মেনুতে'));setTimeout(gcImages,1500);
 }
-const PG={home:()=>home(),daily:()=>daily(),settings:()=>settings(),menu:()=>menuPage(),menuedit:()=>menuEdit(),funds:()=>fundsPage(),recurring:()=>recurringPage(),reports:()=>reportsPage()};
+const PG={home:()=>home(),daily:()=>daily(),settings:()=>settings(),menu:()=>menuPage(),menuedit:()=>menuEdit(),funds:()=>fundsPage(),recurring:()=>recurringPage(),reports:()=>reportsPage(),tree:()=>treePage()};
 let HIST=[],exitAt=0;
 function go(p,back){
   if(SEC[p]&&SEC[p].hidden)p='family';if(!PG[p]&&!SEC[p])p='home';
   if(!back&&p!==PAGE&&DATA){if(p==='home')HIST=[];else{HIST.push(PAGE);if(HIST.length>30)HIST.shift()}}
   PAGE=p;
-  $('#fab').classList.toggle('hidden',!(p==='home'||p==='daily'||SEC[p]));
+  $('#fab').classList.toggle('hidden',!(p==='home'||p==='daily'||(SEC[p]&&p!=='tree')||(p==='tree'&&(DATA.tree||[]).length)));
   $('#backBtn').classList.toggle('hidden',p==='home');
   renderNav();(PG[p]||(()=>listPage(p)))();window.scrollTo(0,0);
 }
@@ -826,7 +1036,7 @@ function goBack(){
 $('#backBtn').onclick=goBack;
 try{if(NATIVE&&window.Capacitor.Plugins.App)window.Capacitor.Plugins.App.addListener('backButton',()=>{lastAct=Date.now();goBack()})}catch(e){}
 $('#lockBtn').onclick=()=>showLock(true);$('#setBtn').onclick=()=>go('settings');
-$('#fab').onclick=()=>{if(PAGE==='daily'||PAGE==='home')txForm();else if(SEC[PAGE])editItem(PAGE)};
+$('#fab').onclick=()=>{if(PAGE==='daily'||PAGE==='home')txForm();else if(PAGE==='tree'){DATA.tree.push({id:uid(),gender:'পুরুষ'});editItem('tree',DATA.tree.length-1,true)}else if(SEC[PAGE])editItem(PAGE)};
 
 /* ================= pages ================= */
 function home(){
@@ -950,7 +1160,7 @@ function listPage(cur){
   ${sec.head?sec.head():''}
   ${rows.length>4?`<input id="q" type="search" placeholder="🔍 খুঁজুন…" style="margin-bottom:10px" autocomplete="off">`:''}
   <div class="card" id="lst">${rows.length?(rows.map((r,i)=>sec.filter&&!sec.filter(r)?'':itemRow(cur,r,i)).join('')||'<p class="muted" style="margin:0">এই ভাগে কেউ নেই। ＋ চেপে যোগ করুন।</p>'):'<p class="muted" style="margin:0">কিছু নেই। ＋ চেপে যোগ করুন।</p>'}</div>`;
-  if(sec.bind)sec.bind();
+  if(sec.bind)sec.bind();loadAvatars();
   if($('#q'))$('#q').oninput=e=>{const q=e.target.value.toLowerCase().trim();document.querySelectorAll('#lst [data-it]').forEach(el=>el.style.display=!q||el.dataset.s.includes(q)?'':'none')};
   document.querySelectorAll('[data-it]').forEach(el=>el.onclick=async e=>{
     const r=DATA[cur][+el.dataset.it];
@@ -967,11 +1177,12 @@ function listPage(cur){
 function itemRow(sec,r,i){
   const S=SEC[sec],a=S.amt?S.amt(r):null;
   const secrets=S.fields.filter(f=>(f.t==='secret'||f.t==='password')&&r[f.k]).map(f=>`<div><small>${esc(f.l)}: <span class="secret" data-k="${f.k}">${esc(f.t==='password'?'••••••••':mask(r[f.k]))}</span><button class="eye">দেখুন</button><button class="eye cp" data-k="${f.k}">📋</button></small></div>`).join('');
-  const pics=S.fields.filter(f=>f.t==='images'&&imgIds(r[f.k]).length).map(f=>`<div><small>📎 ${imgIds(r[f.k]).length}টি ছবি <button class="eye rxv" data-k="${f.k}">দেখুন</button></small></div>`).join('');
+  const pics=S.fields.filter(f=>(f.t==='images'||f.t==='files')&&imgIds(r[f.k]).length).map(f=>`<div><small>📎 ${esc(f.short||f.l)}: ${imgIds(r[f.k]).length}টি <button class="eye rxv" data-k="${f.k}">দেখুন</button></small></div>`).join('');
+  const avId=S.avatar?imgIds(r[S.avatar])[0]:null;
   const userCp=sec==='online'&&r.user?`<div><small>${esc(r.user)} <button class="eye cp" data-k="user">📋</button></small></div>`:'';
-  const srch=esc([S.title(r),S.sub(r),...S.fields.filter(f=>f.t!=='secret'&&f.t!=='password'&&f.t!=='images').map(f=>r[f.k])].filter(Boolean).join(' ').toLowerCase());
+  const srch=esc([S.title(r),S.sub(r),...S.fields.filter(f=>f.t!=='secret'&&f.t!=='password'&&!isFileField(f)&&f.t!=='tref').map(f=>r[f.k])].filter(Boolean).join(' ').toLowerCase());
   const link=sec==='online'&&/^https?:\/\//.test(r.link||'')?`<div><small><a href="${esc(r.link)}" target="_blank" rel="noopener noreferrer">${esc(r.link)}</a></small></div>`:'';
-  return `<div class="row tap" data-it="${i}" data-s="${srch}"><div class="t"><div>${esc(S.title(r)||'—')}</div><small>${esc(S.sub(r)||'')}</small>${userCp}${secrets}${pics}${link}</div>${a!==null?`<div class="a ${a<0?'exp':''}" style="text-align:right">${tk(a)}${S.amtHint?`<br><small class="muted" style="font-weight:400">${S.amtHint}</small>`:''}</div>`:''}</div>`;
+  return `<div class="row tap" data-it="${i}" data-s="${srch}">${S.avatar?`<span class="av" ${avId?`data-av="${esc(avId)}"`:''}>${S.avIcon?S.avIcon(r):'👤'}</span>`:''}<div class="t"><div>${esc(S.title(r)||'—')}</div><small>${esc(S.sub(r)||'')}</small>${userCp}${secrets}${pics}${link}</div>${a!==null?`<div class="a ${a<0?'exp':''}" style="text-align:right">${tk(a)}${S.amtHint?`<br><small class="muted" style="font-weight:400">${S.amtHint}</small>`:''}</div>`:''}</div>`;
 }
 
 /* ================= in-app date picker (no native dialog / keyboard needed) ================= */
@@ -1025,9 +1236,11 @@ $('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};
 function fieldHtml(f,v){
   v=v??'';const id='f_'+f.k;
   if(f.t==='select')return `<label for="${id}">${esc(f.l)}</label><select id="${id}">${f.o.map(o=>`<option ${o==v?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
-  if(f.t==='images')return `<label>${esc(f.l)}</label><div class="imgs" id="${id}" data-ids="${esc(imgIds(v).join(','))}"></div>
-    <div style="display:flex;gap:8px;margin-top:8px"><button type="button" class="btn ghost" style="flex:1" data-cam="${id}">📷 ক্যামেরা</button><button type="button" class="btn ghost" style="flex:1" data-pick="${id}">🖼️ গ্যালারি / ফাইল</button></div>
-    <input type="file" accept="image/*" multiple class="hidden" data-file="${id}"><input type="file" accept="image/*" capture="environment" class="hidden" data-camfile="${id}">`;
+  if(isFileField(f)){const one=f.t==='photo';return `<label>${esc(f.l)}</label><div class="imgs" id="${id}" data-ids="${esc(imgIds(v).join(','))}" ${one?'data-single="1" data-crop="passport"':''}></div>
+    <div style="display:flex;gap:8px;margin-top:8px"><button type="button" class="btn ghost" style="flex:1" data-cam="${id}">📷 ক্যামেরা</button><button type="button" class="btn ghost" style="flex:1" data-pick="${id}">🖼️ ${one?'গ্যালারি':'গ্যালারি / PDF'}</button></div>
+    <input type="file" accept="${one?'image/*':'image/*,application/pdf,.pdf'}" ${one?'':'multiple'} class="hidden" data-file="${id}"><input type="file" accept="image/*" capture="environment" class="hidden" data-camfile="${id}">`}
+  if(f.t==='tref'){const T=DATA.tree||[];const opts=T.filter(x=>x.id!==EDIT_ID&&(!f.o||!f.o.g||x.gender===f.o.g||x.id===v));
+    return `<label for="${id}">${esc(f.l)}</label><select id="${id}"><option value="">— নেই / জানা নেই —</option>${opts.map(x=>`<option value="${esc(x.id)}" ${x.id===v?'selected':''}>${esc((x.name||'—')+(x.born?' ('+String(x.born).slice(0,4)+')':''))}</option>`).join('')}</select>`}
   if(f.t==='password')return `<label for="${id}">${esc(f.l)}</label><div style="display:flex;gap:6px"><div class="pwwrap" style="flex:1"><input id="${id}" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" value="${esc(v)}"><button type="button" class="peek" data-peek="${id}" aria-label="দেখুন">👁</button></div><button type="button" class="btn ghost" data-gen="${id}" title="শক্ত পাসওয়ার্ড বানান" style="padding:8px 12px">🎲</button></div>`;
   if(f.t==='for'){const o=['সংসার','নিজ',...people()];if(v&&!o.includes(v))o.push(v);return `<label for="${id}">${esc(f.l)}</label><select id="${id}">${o.map(x=>`<option ${x==v?'selected':''}>${esc(x)}</option>`).join('')}</select>`}
   if(f.t==='person'){const o=['নিজ',...people()];if(v&&!o.includes(v))o.push(v);return `<label for="${id}">${f.l}</label><select id="${id}">${o.map(x=>`<option ${x==v?'selected':''}>${esc(x)}</option>`).join('')}</select>`}
@@ -1035,21 +1248,23 @@ function fieldHtml(f,v){
   if(f.t==='date')return `<label>${esc(f.l)}</label>${dateField(id,v)}`;
   return `<label for="${id}">${esc(f.l)}</label><input id="${id}" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(v)}">`;
 }
+let EDIT_ID=null;
 function editItem(sec,idx,pre){
-  const S=SEC[sec],r=idx==null?(S.defaults?S.defaults():{}):DATA[sec][idx];
-  openModal(`<h3>${idx==null?'নতুন':'সম্পাদনা'} — ${esc(mName(sec))}</h3><form id="ef">${S.fields.map(f=>`<div data-fk="${f.k}"${f.only?` data-only="${esc(f.only.join('|'))}"`:''}>${fieldHtml(f,r[f.k])}</div>`).join('')}
+  const S=SEC[sec],r=idx==null?(S.defaults?S.defaults():{}):DATA[sec][idx];EDIT_ID=r.id||null;
+  openModal(`<h3>${idx==null?'নতুন':'সম্পাদনা'} — ${esc(mName(sec))}</h3><form id="ef">${S.fields.map(f=>`<div data-fk="${f.k}"${f.only?` data-only="${esc(f.only.join('|'))}" data-by="${f.by||'rel'}"`:''}>${fieldHtml(f,r[f.k])}</div>`).join('')}
   <div class="acts">${idx!=null?'<button type="button" class="btn danger" id="del">মুছুন</button>':''}<button type="button" class="btn ghost" id="cx">বাতিল</button><button class="btn">সংরক্ষণ</button></div></form>`);
   $('#cx').onclick=()=>{if(pre)DATA[sec].splice(idx,1);closeModal();gcImages()};bindPeek();bindImgFields();
-  const relSel=$('#f_rel');if(relSel&&document.querySelector('#ef [data-only]')){const upd=()=>document.querySelectorAll('#ef [data-only]').forEach(d=>d.style.display=d.dataset.only.split('|').includes(relSel.value)?'':'none');relSel.addEventListener('change',upd);upd()}
+  const deps=[...new Set([...document.querySelectorAll('#ef [data-only]')].map(d=>d.dataset.by))];
+  deps.forEach(by=>{const sel=$('#f_'+by);if(!sel)return;const upd=()=>document.querySelectorAll(`#ef [data-only][data-by="${by}"]`).forEach(d=>d.style.display=d.dataset.only.split('|').includes(sel.value)?'':'none');sel.addEventListener('change',upd);upd()});
   document.querySelectorAll('[data-money]').forEach(i=>i.addEventListener('input',()=>{const h=document.querySelector(`[data-mv="${i.id}"]`);if(h)h.textContent=i.value.trim()?'= '+tk(num(i.value)):''}));
   document.querySelectorAll('[data-gen]').forEach(b=>b.onclick=()=>{const i=document.getElementById(b.dataset.gen);i.value=genPass();i.type='text';toast('শক্ত পাসওয়ার্ড বানানো হয়েছে')});
   if($('#del'))$('#del').onclick=async()=>{const extra=sec==='funds'&&fundTx(r.id).length?' এর সব জমার এন্ট্রিও মুছে যাবে।':sec==='recurring'?' (আগে যোগ হওয়া লেনদেনগুলো থাকবে)':'';
-    if(!confirm('মুছে ফেলবেন?'+extra))return;if(sec==='funds'){DATA.tx.filter(t=>t.fund===r.id).forEach(undoTx);DATA.tx=DATA.tx.filter(t=>t.fund!==r.id)}DATA[sec].splice(idx,1);await save();closeModal();go(PAGE);gcImages()};
+    if(!confirm('মুছে ফেলবেন?'+extra))return;if(sec==='funds'){DATA.tx.filter(t=>t.fund===r.id).forEach(undoTx);DATA.tx=DATA.tx.filter(t=>t.fund!==r.id)}if(S.afterDelete)S.afterDelete(r);DATA[sec].splice(idx,1);await save();closeModal();go(PAGE);gcImages()};
   $('#ef').onsubmit=async e=>{e.preventDefault();const o=Object.assign({},r);
-    S.fields.forEach(f=>{if(f.t==='images'){o[f.k]=($('#f_'+f.k).dataset.ids||'').split(',').filter(Boolean);return}const raw=$('#f_'+f.k).value,v=f.t==='password'?raw:raw.trim();o[f.k]=f.t==='money'?(v===''?'':num(v)):v});if(!o.id)o.id=uid();
+    S.fields.forEach(f=>{if(isFileField(f)){o[f.k]=($('#f_'+f.k).dataset.ids||'').split(',').filter(Boolean);return}const raw=$('#f_'+f.k).value,v=f.t==='password'?raw:raw.trim();o[f.k]=f.t==='money'?(v===''?'':num(v)):v});if(!o.id)o.id=uid();
     if(!S.title(o)||S.title(o)==='—'){toast('প্রথম ঘরটি পূরণ করুন');return}
     if(sec==='property'&&!propVal(o)&&!confirm('মূল্য দেওয়া হয়নি — নিট সম্পদে ৳0 যোগ হবে। তবুও সংরক্ষণ করবেন?'))return;
-    if(idx==null)DATA[sec].push(o);else DATA[sec][idx]=o;await save();closeModal();go(PAGE);toast('সংরক্ষিত');gcImages()};
+    if(idx==null)DATA[sec].push(o);else DATA[sec][idx]=o;if(S.afterSave)S.afterSave(o);await save();closeModal();go(PAGE);toast('সংরক্ষিত');gcImages()};
 }
 function recentCats(type){
   const c={};DATA.tx.filter(t=>t.type===type).forEach(t=>c[t.cat]=(c[t.cat]||0)+1);
@@ -1179,8 +1394,8 @@ async function importBackup(file){
     const d=r.data||{},cnt=(d.tx||[]).length,cb=(d.banks||[]).length+(d.savings||[]).length+(d.property||[]).length;
     if(!confirm(`ব্যাকআপে ${cnt}টি লেনদেন ও ${cb}টি সম্পদ আছে।\n\nএই ফোনের বর্তমান সব ডেটা ব্যাকআপ দিয়ে বদলে যাবে। চালিয়ে যাবেন?`)){bt.disabled=false;bt.textContent='ফেরত আনুন';return}
     const pics=d.__img||{};delete d.__img;
-    try{await IDB.clear();for(const[id,b]of Object.entries(pics))await imgPutId(id,unb64(b))}catch(x){toast('ছবিগুলো ফেরত আনা যায়নি')}
-    DATA=Object.assign(blank(),d);DATA.settings=Object.assign(blank().settings,d.settings||{});migrateFamily();initMenu();ensureIds();await save();closeModal();toast('ফেরত আনা হয়েছে ✓'+(Object.keys(pics).length?' ('+Object.keys(pics).length+'টি ছবি সহ)':''));HIST=[];go('home',true)};
+    try{await IDB.clear();for(const[id,b]of Object.entries(pics)){if(typeof b==='string')await imgPutId(id,unb64(b));else await imgPutId(id,unb64(b.b),null,b.t,b.n)}}catch(x){toast('ছবি / ফাইল ফেরত আনা যায়নি')}
+    DATA=Object.assign(blank(),d);DATA.settings=Object.assign(blank().settings,d.settings||{});migrateFamily();initMenu();ensureIds();await save();closeModal();toast('ফেরত আনা হয়েছে ✓'+(Object.keys(pics).length?' ('+Object.keys(pics).length+'টি ছবি / ফাইল সহ)':''));HIST=[];go('home',true)};
 }
 
 /* ---- Excel import/export (matches Roni_Personal_Data.xlsx) ---- */
@@ -1194,7 +1409,7 @@ const XMAP={
  funds:{sh:'সমিতি ও ফান্ড',cols:['name','org','opening','monthly','day','start','profit','status','note','id'],need:'name'},
  recurring:{sh:'নিয়মিত আয়-ব্যয়',cols:['name','type','amount','cat','day','for','status','note','id'],need:'name'},
 };
-['property','family','children','parents','meds','checkups'].forEach(k=>XMAP[k]={sh:SEC[k].name,cols:SEC[k].fields.filter(f=>f.t!=='images').map(f=>f.k),need:k==='meds'?'med':SEC[k].fields[0].k});
+['property','family','children','parents','meds','checkups'].forEach(k=>XMAP[k]={sh:SEC[k].name,cols:SEC[k].fields.filter(f=>!isFileField(f)).map(f=>f.k),need:k==='meds'?'med':SEC[k].fields[0].k});
 const MONEY=new Set(['bal','limit','value','total','paid','emi','given','returned','pprice','rent','fee','allow','cost','opening','monthly','profit','amount']);
 const DATEK=new Set(['start','end','date','dob','pdate','until','next']);
 function cellVal(k,v,t){
@@ -1211,7 +1426,7 @@ async function importExcel(file){
     const got={};let n=0;
     for(const[sec,m]of Object.entries(XMAP)){const ws=wb.Sheets[m.sh];if(!ws)continue;
       got[sec]=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''}).slice(1).map(row=>{const o={};m.cols.forEach((k,i)=>{if(k)o[k]=cellVal(k,row[i],SEC[sec]&&SEC[sec].custom?(SEC[sec].fields.find(f=>f.k===k)||{}).t:undefined)});return o}).filter(o=>o[m.need]);
-      const imgF=SEC[sec]?SEC[sec].fields.filter(f=>f.t==='images'):[];
+      const imgF=SEC[sec]?SEC[sec].fields.filter(isFileField):[];
       if(imgF.length){const key=o=>m.cols.slice(0,5).map(k=>o[k]).join('|'),old={};(DATA[sec]||[]).forEach(o=>old[key(o)]=o);got[sec].forEach(o=>{const q=old[key(o)];if(q)imgF.forEach(f=>{if(q[f.k])o[f.k]=q[f.k]})})}
       if(sec==='savings')got[sec].forEach(o=>{if(o.rate!==''){o.rate=num(o.rate);if(o.rate>0&&o.rate<1)o.rate=+(o.rate*100).toFixed(3)}if(!o.status)o.status='চলমান'});
       n+=got[sec].length}
@@ -1238,6 +1453,7 @@ function exportExcel(){
   }
   const tx=[...DATA.tx].sort((a,b)=>a.date.localeCompare(b.date));
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['তারিখ','মাস','আয় / ব্যয়','ক্যাটাগরি','বিবরণ','পরিমাণ (৳)','কার জন্য','ফান্ড আইডি','নিয়মিত আইডি'],...tx.map(t=>[t.date,monthLabel(t.date.slice(0,7)),t.type,t.cat,t.note,num(t.amount),t.for||'',t.fund||'',t.rid||''])]),'আয়-ব্যয়');
+  if((DATA.tree||[]).length)treeSheet(wb);
   download(new Blob([XLSX.write(wb,{bookType:'xlsx',type:'array'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),'RoniHisab-'+today()+'.xlsx');
 }
 
