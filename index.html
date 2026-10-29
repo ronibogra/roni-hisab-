@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#1F4E78">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; form-action 'none'; base-uri 'none'">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <title>Roni Hisab</title>
@@ -86,6 +86,19 @@ input:focus,select:focus{outline:2px solid var(--pri2);border-color:transparent}
 .dpg button.sel{background:var(--pri);color:#fff}
 .dpg button.fri{color:var(--exp)}
 .dpf{display:flex;gap:8px;margin-top:12px}.dpf .btn{flex:1;padding:10px}
+.imgs{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.th{position:relative;width:84px;height:84px;border-radius:10px;overflow:hidden;border:1px solid var(--line);background:var(--chip);cursor:pointer}
+.th img{width:100%;height:100%;object-fit:cover;display:block}
+.thx{position:absolute;top:3px;right:3px;width:26px;height:26px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:12px;cursor:pointer}
+.ivov{position:fixed;inset:0;background:#000;z-index:37;display:flex;flex-direction:column}
+.ivbar{display:flex;align-items:center;gap:8px;padding:10px;padding-top:calc(10px + env(safe-area-inset-top));color:#fff}
+.ivbar span{flex:1;text-align:center}
+.ivbar button{background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:8px;min-width:42px;height:42px;font-size:16px;cursor:pointer}
+.ivimg{flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;-webkit-overflow-scrolling:touch}
+.ivimg img{max-width:100%;max-height:100%;object-fit:contain}
+.ivimg.zoom{display:block}.ivimg.zoom img{max-width:none;max-height:none;width:230%}
+.ivnav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.18);border:0;color:#fff;width:44px;height:64px;font-size:28px;border-radius:10px;cursor:pointer}
+.ivnav.l{left:6px}.ivnav.r{right:6px}
 .toast{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);background:#222;color:#fff;padding:9px 16px;border-radius:20px;z-index:30;font-size:13px}
 .fab{position:fixed;right:18px;bottom:80px;width:56px;height:56px;border-radius:50%;background:var(--pri);color:#fff;border:0;font-size:28px;box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer;z-index:6}
 .monthnav{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
@@ -161,8 +174,8 @@ const monthLabel=ym=>{const[y,m]=ym.split('-');return MONTHS[+m-1]+' '+y};
 const fmtDate=s=>{if(!s)return'';const[y,m,d]=s.split('-');return +d+' '+MONTHS[+m-1].slice(0,4)+' '+y};
 const uid=()=>crypto.getRandomValues(new Uint32Array(2)).join('-');
 const enc=new TextEncoder(),dec=new TextDecoder();
-const b64=u=>btoa(String.fromCharCode(...new Uint8Array(u)));
-const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+const b64=u=>bytesToB64(new Uint8Array(u));
+const unb64=s=>{const b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u};
 function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),2200)}
 const NATIVE=!!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform());
 const LS={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
@@ -171,7 +184,7 @@ function mask(v){v=String(v||'');if(!v)return'';return v.length<=4?'••••
 /* ================= secure vault ================= */
 const VKEY='roniHisab.vault.v1', ITER=310000;
 let KEY=null, SALT=null, DATA=null;
-const blank=()=>({banks:[],mobile:[],tx:[],savings:[],loans:[],recv:[],online:[],property:[],children:[],parents:[],meds:[],checkups:[],funds:[],recurring:[],
+const blank=()=>({banks:[],mobile:[],tx:[],savings:[],loans:[],recv:[],online:[],property:[],family:[],children:[],parents:[],meds:[],checkups:[],funds:[],recurring:[],
   settings:{lockMin:5,zIncRecv:false,zSubLoan:false,zRate:2.5}});
 async function deriveKey(pw,salt){
   const base=await crypto.subtle.importKey('raw',enc.encode(pw),'PBKDF2',false,['deriveKey']);
@@ -229,7 +242,7 @@ async function unlockWith(pw){
   setFails(0);startApp();
 }
 function showLock(manual){
-  KEY=null;DATA=null;SALT=null;closeDP();
+  KEY=null;DATA=null;SALT=null;closeDP();closeIV();
   $('#app').classList.add('hidden');$('#modal').classList.add('hidden');$('#sheet').innerHTML='';
   const L=$('#lock');L.classList.remove('hidden');
   const has=!!vault();
@@ -291,13 +304,116 @@ function openPicker(sel){PICKING=Date.now();const i=$(sel);i.value='';i.click()}
 setInterval(()=>{if(KEY&&!picking()&&Date.now()-lastAct>DATA.settings.lockMin*60000)showLock()},10000);
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden)hiddenAt=Date.now();
-  else if(picking()){lastAct=Date.now()}
+  else if(picking()){lastAct=Date.now();PICKING=0}
   else if(KEY&&hiddenAt&&Date.now()-hiddenAt>Math.min(60000,DATA.settings.lockMin*60000))showLock();
 });
 
 /* ================= family helpers ================= */
 const BLOOD=['','A+','A-','B+','B-','AB+','AB-','O+','O-'];
-const people=()=>[...DATA.children,...DATA.parents].map(p=>p.name).filter(Boolean);
+const people=()=>(DATA.family||[]).map(p=>p.name).filter(Boolean);
+/* ================= family (one place for spouse, children, parents, others) ================= */
+const RELS=['স্ত্রী','স্বামী','ছেলে','মেয়ে','বাবা','মা','ভাই','বোন','শ্বশুর','শাশুড়ি','অন্যান্য'];
+const KIDS=['ছেলে','মেয়ে'],ELDERS=['বাবা','মা','শ্বশুর','শাশুড়ি'],SPOUSE=['স্ত্রী','স্বামী'];
+const STUDY=['ছেলে','মেয়ে','ভাই','বোন','অন্যান্য'],ADULT=RELS.filter(x=>!KIDS.includes(x));
+const FGROUPS=[['all','সব'],['spouse','স্ত্রী / স্বামী',SPOUSE],['kids','সন্তান',KIDS],['elders','বাবা-মা',ELDERS],['other','অন্যান্য']];
+const relGroup=rel=>(FGROUPS.find(g=>g[2]&&g[2].includes(rel))||['other'])[0];
+const relIcon=rel=>({'স্ত্রী':'👩','স্বামী':'👨','ছেলে':'👦','মেয়ে':'👧','বাবা':'👴','মা':'👵','শ্বশুর':'👴','শাশুড়ি':'👵','ভাই':'🧑','বোন':'👩'})[rel]||'🧑';
+const Fo=(only,...a)=>Object.assign(F(...a),{only});
+let FAMF='all';
+function migrateFamily(){
+  if(!DATA)return false;if(!Array.isArray(DATA.family))DATA.family=[];
+  const c=DATA.children||[],p=DATA.parents||[];if(!c.length&&!p.length)return false;
+  c.forEach(x=>{const o=Object.assign({},x,{rel:x.gender==='মেয়ে'?'মেয়ে':'ছেলে'});delete o.gender;if(!o.id)o.id=uid();DATA.family.push(o)});
+  p.forEach(x=>{const o=Object.assign({},x,{rel:RELS.includes(x.rel)?x.rel:'অন্যান্য'});if(!o.id)o.id=uid();DATA.family.push(o)});
+  DATA.children=[];DATA.parents=[];return true;
+}
+function famInfo(r){
+  const meds=DATA.meds.filter(m=>m.who===r.name&&m.status!=='বন্ধ').length;
+  const nx=DATA.checkups.filter(c=>c.who===r.name&&c.next&&daysTo(c.next)>=0).map(c=>c.next).sort()[0];
+  return [meds?'💊 '+meds+'টি ওষুধ':'',nx?'🩺 '+fmtDate(nx):''].filter(Boolean).join(' · ');
+}
+
+/* ================= encrypted photo store (IndexedDB, AES-GCM with the vault key) ================= */
+const IDB={p:null,
+  open(){return this.p||(this.p=new Promise((ok,no)=>{const q=indexedDB.open('roniHisabImg',1);q.onupgradeneeded=()=>q.result.createObjectStore('img');q.onsuccess=()=>ok(q.result);q.onerror=()=>{this.p=null;no(q.error)}}))},
+  async run(mode,fn){const db=await this.open();return new Promise((ok,no)=>{const t=db.transaction('img',mode),r=fn(t.objectStore('img'));t.oncomplete=()=>ok(r&&r.result);t.onerror=t.onabort=()=>no(t.error)})},
+  put(k,v){return this.run('readwrite',s=>s.put(v,k))},get(k){return this.run('readonly',s=>s.get(k))},del(k){return this.run('readwrite',s=>s.delete(k))},
+  keys(){return this.run('readonly',s=>s.getAllKeys())},clear(){return this.run('readwrite',s=>s.clear())}};
+const imgIds=v=>Array.isArray(v)?v.filter(x=>typeof x==='string'&&x.startsWith('img_')):[];
+async function imgPutId(id,bytes,key){const iv=crypto.getRandomValues(new Uint8Array(12));const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key||KEY,bytes);await IDB.put(id,{iv,ct,t:'image/jpeg'});return id}
+const imgSave=bytes=>imgPutId('img_'+uid(),bytes);
+async function imgBytes(id,key){const v=await IDB.get(id);if(!v)return null;return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:v.iv},key||KEY,v.ct))}
+async function imgURL(id){const b=await imgBytes(id);return b?URL.createObjectURL(new Blob([b],{type:'image/jpeg'})):null}
+function usedImgIds(){return new Set(DATA?(JSON.stringify(DATA).match(/img_\d+-\d+/g)||[]):[])}
+async function gcImages(){try{if(!DATA)return;const used=usedImgIds();for(const k of await IDB.keys())if(!used.has(k))await IDB.del(k)}catch(e){}}
+async function reencImages(a,b){for(const id of await IDB.keys()){try{const v=await IDB.get(id);const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:v.iv},a,v.ct);await imgPutId(id,pt,b)}catch(e){}}}
+async function compressImg(src){
+  const url=typeof src==='string'?src:URL.createObjectURL(src);
+  try{
+    const im=await new Promise((ok,no)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=()=>no(new Error('ছবিটি খোলা যায়নি'));i.src=url});
+    const M=1600,sc=Math.min(1,M/Math.max(im.naturalWidth||1,im.naturalHeight||1));
+    const c=document.createElement('canvas');c.width=Math.max(1,Math.round(im.naturalWidth*sc));c.height=Math.max(1,Math.round(im.naturalHeight*sc));
+    const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(im,0,0,c.width,c.height);
+    const b=await new Promise(ok=>c.toBlob(ok,'image/jpeg',0.75));return new Uint8Array(await b.arrayBuffer());
+  }finally{if(typeof src!=='string')URL.revokeObjectURL(url)}
+}
+let TURLS=[];
+function renderThumbs(box){
+  const ids=(box.dataset.ids||'').split(',').filter(Boolean);
+  box.innerHTML=ids.length?ids.map((id,i)=>`<div class="th" data-i="${i}"><img alt="" data-img="${esc(id)}"><button type="button" class="thx" data-rm="${i}" aria-label="সরান">✕</button></div>`).join(''):'<p class="muted" style="margin:4px 0">এখনো কোনো ছবি নেই</p>';
+  box.querySelectorAll('img[data-img]').forEach(async im=>{const u=await imgURL(im.dataset.img).catch(()=>null);if(u){TURLS.push(u);im.src=u}else im.alt='⚠'});
+  box.querySelectorAll('.th').forEach(t=>t.onclick=e=>{
+    if(e.target.dataset.rm!=null){e.stopPropagation();if(!confirm('ছবিটি সরাবেন?'))return;ids.splice(+e.target.dataset.rm,1);box.dataset.ids=ids.join(',');renderThumbs(box);return}
+    viewImages(ids,+t.dataset.i)});
+}
+async function addImages(box,srcs){
+  const ids=(box.dataset.ids||'').split(',').filter(Boolean);let n=0;
+  box.insertAdjacentHTML('beforeend','<p class="muted" style="margin:4px 0" data-busy>ছবি যোগ হচ্ছে…</p>');
+  for(const s of srcs){try{ids.push(await imgSave(await compressImg(s)));n++}catch(e){toast('ছবি যোগ করা যায়নি: '+(e&&e.message||e))}}
+  box.dataset.ids=ids.join(',');renderThumbs(box);if(n)toast(n+'টি ছবি যোগ হয়েছে — সংরক্ষণ চাপুন');
+}
+function bindImgFields(){document.querySelectorAll('#sheet .imgs').forEach(box=>{
+  renderThumbs(box);const id=box.id;
+  const fi=document.querySelector(`[data-file="${id}"]`),ci=document.querySelector(`[data-camfile="${id}"]`);
+  const onFiles=e=>{PICKING=0;lastAct=Date.now();const fs=[...e.target.files].filter(f=>/^image\//.test(f.type)||/\.(jpe?g|png|webp|heic|gif|bmp)$/i.test(f.name));e.target.value='';
+    if(fs.length)addImages(box,fs);else if(e.target.files&&e.target.files.length)toast('শুধু ছবি যোগ করা যায়')};
+  fi.onchange=onFiles;ci.onchange=onFiles;
+  document.querySelector(`[data-pick="${id}"]`).onclick=()=>{PICKING=Date.now();fi.click()};
+  document.querySelector(`[data-cam="${id}"]`).onclick=async()=>{
+    const Cam=NATIVE&&window.Capacitor.Plugins.Camera;
+    if(!Cam){PICKING=Date.now();ci.click();return}
+    PICKING=Date.now();
+    try{const p=await Cam.getPhoto({source:'CAMERA',resultType:'base64',quality:80,width:1600,correctOrientation:true,saveToGallery:false,allowEditing:false});
+      await addImages(box,['data:image/'+(p.format||'jpeg')+';base64,'+p.base64String])}
+    catch(e){if(!/cancel/i.test(String(e&&e.message||e)))toast('ক্যামেরা খোলা যায়নি: '+(e&&e.message||e))}
+    finally{PICKING=0;lastAct=Date.now()}};
+})}
+let IV=null;
+function viewImages(ids,i){
+  if(!ids.length)return;IV={ids,i:i||0,urls:{}};
+  let ov=$('#iv');if(!ov){ov=document.createElement('div');ov.id='iv';ov.className='ivov';document.body.appendChild(ov)}
+  ov.classList.remove('hidden');drawIV();
+}
+async function drawIV(){
+  const ov=$('#iv'),cur=IV,{ids,i}=cur;
+  ov.innerHTML=`<div class="ivbar"><button data-a="x" aria-label="বন্ধ">✕</button><span>${i+1} / ${ids.length}</span><button data-a="z" aria-label="বড় করুন">🔍</button><button data-a="s" aria-label="শেয়ার / সেভ">📤</button></div>
+   <div class="ivimg" id="ivimg"><p style="color:#bbb">লোড হচ্ছে…</p></div>
+   ${ids.length>1?'<button class="ivnav l" data-a="p" aria-label="আগের">‹</button><button class="ivnav r" data-a="n" aria-label="পরের">›</button>':''}`;
+  ov.querySelectorAll('[data-a]').forEach(b=>b.onclick=async()=>{const a=b.dataset.a;
+    if(a==='x')closeIV();else if(a==='p'){IV.i=(IV.i-1+ids.length)%ids.length;drawIV()}else if(a==='n'){IV.i=(IV.i+1)%ids.length;drawIV()}
+    else if(a==='z')$('#ivimg').classList.toggle('zoom');
+    else if(a==='s'){const by=await imgBytes(ids[IV.i]).catch(()=>null);if(by)download(new Blob([by],{type:'image/jpeg'}),'prescription-'+today()+'-'+(IV.i+1)+'.jpg')}});
+  const id=ids[i];let u=cur.urls[id];if(!u){u=await imgURL(id).catch(()=>null);if(u)cur.urls[id]=u}
+  if(IV!==cur||IV.i!==i)return;const box=$('#ivimg');if(!box)return;
+  box.innerHTML=u?`<img src="${u}" alt="প্রেসক্রিপশন">`:'<p style="color:#f88">ছবিটি পাওয়া যায়নি</p>';
+}
+function closeIV(){const o=$('#iv');if(o){o.classList.add('hidden');o.innerHTML=''}if(IV)Object.values(IV.urls).forEach(u=>URL.revokeObjectURL(u));IV=null}
+function bytesToB64(u){let s='';for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s)}
+async function backupJSON(){
+  const img={};for(const id of usedImgIds()){const b=await imgBytes(id).catch(()=>null);if(b)img[id]=bytesToB64(b)}
+  return JSON.stringify(await sealWith(KEY,SALT,Object.assign({},DATA,{__img:img})));
+}
+
 const dnum=s=>Date.UTC(+s.slice(0,4),+s.slice(5,7)-1,+s.slice(8,10));
 const daysTo=s=>Math.round((dnum(s)-dnum(today()))/864e5);
 function age(dob){if(!dob)return'';const n=new Date(),b=new Date(dob+'T00:00');let m=(n.getFullYear()-b.getFullYear())*12+n.getMonth()-b.getMonth();if(n.getDate()<b.getDate())m--;
@@ -513,18 +629,28 @@ const SEC={
    F('name','নাম / বিবরণ (যেমন: উত্তরা ফ্ল্যাট)'),F('value','বর্তমান আনুমানিক মূল্য — নিট সম্পদে এটা যোগ হবে','money'),F('pprice','কেনা দাম','money'),
    F('loc','ঠিকানা / অবস্থান'),F('size','পরিমাণ (শতাংশ / বর্গফুট / ভরি)'),F('owner','মালিকের নাম'),F('pdate','কেনার তারিখ','date'),F('rent','মাসিক ভাড়া আয়','money'),F('doc','দলিল / রেজিস্ট্রেশন নম্বর','secret'),F('zakat','জাকাতযোগ্য? (স্বর্ণ, ব্যবসার মাল)','select',['না','হ্যাঁ']),F('note','নোট')],
    title:r=>r.name||r.kind,sub:r=>[r.kind,r.loc,r.size,num(r.rent)?'ভাড়া '+tk(r.rent)+'/মাস':'',!propVal(r)?'⚠ মূল্য দেওয়া নেই — চেপে মূল্য দিন':(!num(r.value)?'কেনা দাম ধরা হয়েছে':'')].filter(Boolean).join(' · '),amt:r=>propVal(r)},
- children:{name:'সন্তান',totLabel:'এ মাসে সন্তানদের জন্য খরচ',fields:[F('name','নাম'),F('gender','ছেলে / মেয়ে','select',['ছেলে','মেয়ে']),F('dob','জন্ম তারিখ','date'),F('school','স্কুল / প্রতিষ্ঠান'),
+ children:{hidden:true,name:'সন্তান',totLabel:'এ মাসে সন্তানদের জন্য খরচ',fields:[F('name','নাম'),F('gender','ছেলে / মেয়ে','select',['ছেলে','মেয়ে']),F('dob','জন্ম তারিখ','date'),F('school','স্কুল / প্রতিষ্ঠান'),
    F('cls','শ্রেণি'),F('roll','রোল'),F('fee','মাসিক বেতন / নির্দিষ্ট খরচ','money'),F('blood','রক্তের গ্রুপ','select',BLOOD),F('birthNo','জন্ম নিবন্ধন নম্বর','secret'),F('doctor','ডাক্তার / ফোন'),F('note','নোট (এলার্জি, টিকা, শখ…)')],
    title:r=>r.name,sub:r=>[r.gender,age(r.dob),r.cls?'শ্রেণি '+r.cls:'',r.school,r.blood].filter(Boolean).join(' · '),amt:r=>spentOn(r.name),amtHint:'এ মাসে খরচ'},
- parents:{name:'বাবা-মা',totLabel:'এ মাসে বাবা-মায়ের জন্য খরচ',fields:[F('name','নাম'),F('rel','সম্পর্ক','select',['বাবা','মা','শ্বশুর','শাশুড়ি','অন্যান্য']),F('dob','জন্ম তারিখ','date'),F('phone','মোবাইল'),
+ parents:{hidden:true,name:'বাবা-মা',totLabel:'এ মাসে বাবা-মায়ের জন্য খরচ',fields:[F('name','নাম'),F('rel','সম্পর্ক','select',['বাবা','মা','শ্বশুর','শাশুড়ি','অন্যান্য']),F('dob','জন্ম তারিখ','date'),F('phone','মোবাইল'),
    F('addr','ঠিকানা'),F('blood','রক্তের গ্রুপ','select',BLOOD),F('health','স্বাস্থ্য সমস্যা (ডায়াবেটিস, প্রেশার…)'),F('allow','মাসিক হাতখরচ দিই','money'),F('nid','NID নম্বর','secret'),F('emergency','জরুরি যোগাযোগ'),F('note','নোট')],
    title:r=>r.name+(r.rel?' ('+r.rel+')':''),sub:r=>[age(r.dob),r.blood,r.health,r.phone].filter(Boolean).join(' · '),amt:r=>spentOn(r.name),amtHint:'এ মাসে খরচ'},
  meds:{name:'ওষুধ',totLabel:'মাসিক ওষুধ খরচ (চলমান)',fields:[F('who','কার ওষুধ','person'),F('med','ওষুধের নাম'),F('dose','মাত্রা (যেমন ১+০+১)'),F('time','কখন (খাবারের আগে/পরে)'),
    F('cost','মাসিক খরচ','money'),F('until','স্টক শেষ হবে','date'),F('status','অবস্থা','select',['চলমান','বন্ধ']),F('note','নোট')],
    title:r=>r.med,sub:r=>[r.who,r.dose,r.time,r.until?'স্টক: '+fmtDate(r.until):'',r.status==='বন্ধ'?'বন্ধ':''].filter(Boolean).join(' · '),amt:r=>r.status==='বন্ধ'?0:num(r.cost)},
- checkups:{name:'ডাক্তার ও চেকআপ',fields:[F('who','কার','person'),F('doctor','ডাক্তারের নাম'),F('place','হাসপাতাল / চেম্বার'),F('phone','সিরিয়াল ফোন'),F('date','শেষ দেখানো','date'),
-   F('next','পরের তারিখ','date'),F('fee','ফি','money'),F('note','পরামর্শ / নোট')],
+ checkups:{name:'ডাক্তার ও প্রেসক্রিপশন',fields:[F('who','কার','person'),F('doctor','ডাক্তারের নাম'),F('place','হাসপাতাল / চেম্বার'),F('phone','সিরিয়াল ফোন'),F('date','শেষ দেখানো','date'),
+   F('rx','প্রেসক্রিপশন / রিপোর্টের ছবি','images'),F('next','পরের তারিখ','date'),F('fee','ফি','money'),F('note','পরামর্শ / নোট')],
    title:r=>r.doctor||'ডাক্তার',sub:r=>[r.who,r.place,r.date?'শেষ: '+fmtDate(r.date):'',r.next?'পরের: '+fmtDate(r.next):''].filter(Boolean).join(' · ')},
+ family:{name:'ফ্যামিলি',totLabel:'এ মাসে পরিবারের জন্য মোট খরচ',fields:[F('name','নাম'),F('rel','সম্পর্ক','select',RELS),F('dob','জন্ম তারিখ','date'),F('phone','মোবাইল'),
+   F('blood','রক্তের গ্রুপ','select',BLOOD),F('health','স্বাস্থ্য সমস্যা / এলার্জি (ডায়াবেটিস, প্রেশার…)'),Fo(ADULT,'job','পেশা'),
+   Fo(STUDY,'school','স্কুল / প্রতিষ্ঠান'),Fo(STUDY,'cls','শ্রেণি'),Fo(STUDY,'roll','রোল'),Fo(STUDY,'fee','মাসিক বেতন / পড়ার খরচ','money'),Fo(STUDY,'birthNo','জন্ম নিবন্ধন নম্বর','secret'),
+   Fo(ADULT,'allow','মাসিক হাতখরচ দিই','money'),Fo(ADULT,'nid','NID নম্বর','secret'),F('addr','ঠিকানা'),F('emergency','জরুরি যোগাযোগ'),F('doctor','ডাক্তার / ফোন'),F('note','নোট (টিকা, শখ…)')],
+   title:r=>r.name?relIcon(r.rel)+' '+r.name:'',sub:r=>[r.rel,age(r.dob),r.cls?'শ্রেণি '+r.cls:'',r.blood,r.health,famInfo(r)].filter(Boolean).join(' · '),amt:r=>spentOn(r.name),amtHint:'এ মাসে খরচ',
+   defaults:()=>({rel:FAMF==='kids'?'ছেলে':FAMF==='elders'?'বাবা':FAMF==='other'?'অন্যান্য':'স্ত্রী'}),
+   filter:r=>FAMF==='all'||relGroup(r.rel)===FAMF,
+   head:()=>`<div class="chips" style="margin:0 0 10px">${FGROUPS.map(g=>{const n=g[0]==='all'?DATA.family.length:DATA.family.filter(x=>relGroup(x.rel)===g[0]).length;return `<button data-fg="${g[0]}" class="${FAMF===g[0]?'on':''}">${g[1]} (${n})</button>`}).join('')}</div>
+     <div class="grid" style="margin-bottom:12px"><button class="btn ghost" data-go2="meds">💊 ওষুধ</button><button class="btn ghost" data-go2="checkups">🩺 ডাক্তার ও প্রেসক্রিপশন</button></div>`,
+   bind:()=>{document.querySelectorAll('[data-fg]').forEach(b=>b.onclick=()=>{FAMF=b.dataset.fg;listPage('family')});document.querySelectorAll('[data-go2]').forEach(b=>b.onclick=()=>go(b.dataset.go2))}},
  funds:{name:'সমিতি / ফান্ড',fields:[F('name','ফান্ডের নাম (যেমন Head Office Somiti)'),F('org','সমিতি / প্রতিষ্ঠান'),F('opening','এই অ্যাপে আনার আগে মোট জমা','money'),
    F('monthly','মাসিক চাঁদা','money'),F('day','প্রতি মাসের কত তারিখে','select',DAYS),F('start','চাঁদা শুরুর মাস','date'),F('profit','মুনাফা / লভ্যাংশ যোগ হয়েছে','money'),
    F('status','অবস্থা','select',['চলমান','বন্ধ']),F('note','নোট')],title:r=>r.name,sub:r=>[r.org,num(r.monthly)?'মাসিক '+tk(r.monthly):''].filter(Boolean).join(' · '),amt:r=>fundBal(r)},
@@ -534,19 +660,22 @@ const SEC={
 };
 
 /* ================= menu ================= */
-const BUILTIN=[['home','হোম','🏠'],['daily','দৈনিক','📒'],['banks','ব্যাংক','🏦'],['savings','সঞ্চয় ও বিনিয়োগ','💰'],['children','সন্তান','👦'],
- ['parents','বাবা-মা','👴'],['property','বাড়ি ও সম্পত্তি','🏡'],['mobile','মোবাইল ব্যাংকিং','📱'],['loans','ঋণ','💳'],['recv','পাওনা','🤝'],
- ['meds','ওষুধ','💊'],['checkups','ডাক্তার ও চেকআপ','🩺'],['online','পাসওয়ার্ড ও ইমেইল','🔐']];
+const BUILTIN=[['home','হোম','🏠'],['daily','দৈনিক','📒'],['banks','ব্যাংক','🏦'],['savings','সঞ্চয় ও বিনিয়োগ','💰'],['family','ফ্যামিলি','👨‍👩‍👧'],
+['property','বাড়ি ও সম্পত্তি','🏡'],['mobile','মোবাইল ব্যাংকিং','📱'],['loans','ঋণ','💳'],['recv','পাওনা','🤝'],
+ ['meds','ওষুধ','💊'],['checkups','ডাক্তার ও প্রেসক্রিপশন','🩺'],['online','পাসওয়ার্ড ও ইমেইল','🔐']];
 BUILTIN.splice(2,0,['reports','রিপোর্ট','📊'],['funds','সমিতি / ফান্ড','🏛️'],['recurring','নিয়মিত আয়-ব্যয়','🔁']);
 const EMOJI=['📊','🏛️','🔁','🔐','🏠','📒','🏦','💰','👦','👧','👴','👵','🏡','📱','💳','🤝','💊','🩺','🌐','🚗','🏍️','🕌','🎓','📚','🐄','🌾','🏪','💼','🎁','✈️','📦','⚽','📝','🔧','💍','🧾'];
 const FTYPES=[['text','লেখা'],['money','টাকা'],['date','তারিখ'],['secret','গোপন নম্বর'],['select','বিকল্প থেকে']];
 const PAGES0=new Set(['home','daily']);
 function initMenu(){
   const st=DATA.settings;st.customs=st.customs||{};
+  const oldKidPos=Array.isArray(st.menu)?st.menu.findIndex(x=>x&&(x.id==='children'||x.id==='parents')):-1;
   let m=Array.isArray(st.menu)?st.menu.filter(x=>x&&x.id&&(BUILTIN.some(b=>b[0]===x.id)||st.customs[x.id])):[];
+  if(oldKidPos>=0&&!m.some(x=>x.id==='family')){const keep=st.menu.slice(0,oldKidPos).filter(x=>x&&m.includes(x)).length;m.splice(keep,0,{id:'family',name:'ফ্যামিলি',icon:'👨‍👩‍👧',show:true})}
   BUILTIN.forEach(([id,name,icon],bi)=>{if(m.some(x=>x.id===id))return;
     let at=-1;for(let j=bi-1;j>=0&&at<0;j--)at=m.findIndex(x=>x.id===BUILTIN[j][0]);
     m.splice(at+1,0,{id,name,icon,show:true})});
+  m.forEach(x=>{if(x.id==='checkups'&&x.name==='ডাক্তার ও চেকআপ')x.name='ডাক্তার ও প্রেসক্রিপশন'});
   m.forEach(x=>{if(x.id==='online'&&x.name==='অনলাইন অ্যাকাউন্ট'){x.name='পাসওয়ার্ড ও ইমেইল';if(x.icon==='🌐')x.icon='🔐'}});
   Object.keys(st.customs).forEach(id=>{if(!m.some(x=>x.id===id))m.push({id,name:st.customs[id].name||'নতুন মেনু',icon:'📝',show:true})});
   st.menu=m;Object.keys(st.customs).forEach(regCustom);
@@ -670,13 +799,14 @@ function monthSum(ym){
 /* ================= routing ================= */
 let PAGE='home', YM=today().slice(0,7);
 function startApp(){
-  initMenu();$('#lock').classList.add('hidden');$('#app').classList.remove('hidden');lastAct=Date.now();
+  const mig=migrateFamily();initMenu();$('#lock').classList.add('hidden');$('#app').classList.remove('hidden');lastAct=Date.now();
   ensureIds();if(!PG[PAGE]&&!SEC[PAGE])PAGE='home';HIST=[];go(PAGE,true);
+  if(mig)save().then(()=>toast('সন্তান ও বাবা-মা এখন "ফ্যামিলি" মেনুতে'));setTimeout(gcImages,1500);
 }
 const PG={home:()=>home(),daily:()=>daily(),settings:()=>settings(),menu:()=>menuPage(),menuedit:()=>menuEdit(),funds:()=>fundsPage(),recurring:()=>recurringPage(),reports:()=>reportsPage()};
 let HIST=[],exitAt=0;
 function go(p,back){
-  if(!PG[p]&&!SEC[p])p='home';
+  if(SEC[p]&&SEC[p].hidden)p='family';if(!PG[p]&&!SEC[p])p='home';
   if(!back&&p!==PAGE&&DATA){if(p==='home')HIST=[];else{HIST.push(PAGE);if(HIST.length>30)HIST.shift()}}
   PAGE=p;
   $('#fab').classList.toggle('hidden',!(p==='home'||p==='daily'||SEC[p]));
@@ -685,6 +815,7 @@ function go(p,back){
 }
 /* back: close calendar → close form → previous screen → home → (home) press twice to exit */
 function goBack(){
+  if(IV){closeIV();return}
   if(DP){closeDP();return}
   if(!$('#modal').classList.contains('hidden')){const c=$('#cx');if(c)c.click();else closeModal();return}
   if(!KEY){NATIVE&&window.Capacitor.Plugins.App&&window.Capacitor.Plugins.App.exitApp();return}
@@ -719,7 +850,7 @@ function home(){
   const line=(go,ic,l,v,sub,cls,p)=>`<div class="row tap" data-go="${go}"><span style="font-size:20px;width:28px;text-align:center">${ic}</span><div class="t"><div>${esc(l)}</div>${sub?`<small>${esc(sub)}</small>`:''}</div>
     <div class="a ${cls||''}" style="text-align:right">${tk(v)}${p!=null?`<br><small class="muted" style="font-weight:400">${p.toFixed(1)}%</small>`:''}</div></div>`;
   const stack=A.filter(x=>x[3]>0);
-  const names=[...DATA.children,...DATA.parents].map(x=>x.name).filter(Boolean);
+  const names=people();
   const fam=names.reduce((a,n)=>a+spentOn(n),0);
   const medM=DATA.meds.filter(x=>x.status!=='বন্ধ').reduce((a,x)=>a+num(x.cost),0),rentM=DATA.property.reduce((a,x)=>a+num(x.rent),0);
   const otherCust=Object.keys(DATA.settings.customs||{}).filter(id=>!DATA.settings.customs[id].role&&SEC[id]&&SEC[id].amt&&(DATA[id]||[]).length);
@@ -752,7 +883,7 @@ function home(){
     <div class="row"><div class="t">সমিতি / ফান্ডে জমা</div><div class="a">${tk(Y.f-Y.fw)}</div></div>
     <div class="row"><div class="t"><b>হাতে বাকি</b></div><div class="a ${Y.left<0?'exp':'inc'}">${tk(Y.left)}</div></div></div>
   <h2>পরিবার ও নিয়মিত</h2><div class="card">
-    ${line('children','👨‍👩‍👧','এ মাসে পরিবারের জন্য খরচ',fam,names.map(n=>n+' '+tk(spentOn(n))).join(' · '),'exp')}
+    ${line('family','👨‍👩‍👧','এ মাসে পরিবারের জন্য খরচ',fam,names.map(n=>n+' '+tk(spentOn(n))).join(' · '),'exp')}
     ${medM?line('meds','💊','মাসিক ওষুধ খরচ',medM,DATA.meds.filter(x=>x.status!=='বন্ধ').length+'টি ওষুধ','exp'):''}
     ${rentM?line('property','🏪','মাসিক ভাড়া আয় (সম্পত্তি থেকে)',rentM,'','inc'):''}
     ${line('recurring','🔁','নিয়মিত আয় − খরচ (প্রতি মাসে)',DATA.recurring.filter(active).reduce((a,r)=>a+(r.type==='আয়'?num(r.amount):-num(r.amount)),0),DATA.recurring.filter(active).length+'টি নিয়মিত এন্ট্রি','')}
@@ -774,8 +905,8 @@ function upcomingHtml(){
   DATA.savings.forEach(r=>{if(r.end&&(r.status||'চলমান')==='চলমান')add(r.end,`${r.kind} মেয়াদ শেষ — ${r.inst||''}`,'savings')});
   DATA.checkups.forEach(r=>{if(r.next)add(r.next,`${r.who||''} — ডাক্তার ${r.doctor||''} দেখানো`,'checkups')});
   DATA.meds.forEach(r=>{if(r.until&&r.status!=='বন্ধ')add(r.until,`${r.who||''} — ${r.med} ওষুধ শেষ হবে`,'meds')});
-  [...DATA.children,...DATA.parents].forEach(r=>{if(!r.dob)return;const y=new Date().getFullYear();let d=y+r.dob.slice(4);if(daysTo(d)<0)d=(y+1)+r.dob.slice(4);
-    const n=daysTo(d);if(n<=30)L.push({n,txt:`🎂 ${r.name}-এর জন্মদিন`,go:r.rel?'parents':'children'})});
+  (DATA.family||[]).forEach(r=>{if(!r.dob)return;const y=new Date().getFullYear();let d=y+r.dob.slice(4);if(daysTo(d)<0)d=(y+1)+r.dob.slice(4);
+    const n=daysTo(d);if(n<=30)L.push({n,txt:`🎂 ${r.name}-এর জন্মদিন`,go:'family'})});
   if(!L.length)return'';L.sort((a,b)=>a.n-b.n);
   const when=n=>n<0?`<span class="exp">${-n} দিন আগে</span>`:n===0?'<b class="exp">আজ</b>':n===1?'<b>আগামীকাল</b>':n+' দিন পর';
   return `<h2>আসন্ন</h2><div class="card">${L.slice(0,8).map(x=>`<div class="row tap" data-go="${x.go}"><div class="t"><div>${esc(x.txt)}</div></div><div class="a" style="font-weight:400">${when(x.n)}</div></div>`).join('')}</div>`;
@@ -816,11 +947,14 @@ function listPage(cur){
   const rows=DATA[cur]||(DATA[cur]=[]);const tot=sec.amt?rows.reduce((a,r)=>a+(cur==='savings'&&(r.status||'চলমান')!=='চলমান'?0:sec.amt(r)),0):null;
   $('#view').innerHTML=`${tot!==null?`<div class="stat" style="margin-bottom:12px"><small>${sec.totLabel||'মোট'} ${cur==='banks'?'(ক্রেডিট কার্ডের বকেয়া বাদে)':''}</small><b>${tk(cur==='banks'?totals().bank:Math.abs(tot))}</b></div>`:''}
   ${cur==='online'?`<p class="muted" style="margin:0 0 10px">🔐 সব তথ্য এনক্রিপ্ট করা। ${bioOn()?'পাসওয়ার্ড দেখতে/কপি করতে আঙুলের ছাপ লাগবে।':'আঙুলের ছাপ চালু থাকলে দেখার আগে যাচাই করবে।'} Excel-এ পাসওয়ার্ড যায় না — শুধু এনক্রিপ্টেড ব্যাকআপে।</p>`:''}
+  ${sec.head?sec.head():''}
   ${rows.length>4?`<input id="q" type="search" placeholder="🔍 খুঁজুন…" style="margin-bottom:10px" autocomplete="off">`:''}
-  <div class="card" id="lst">${rows.length?rows.map((r,i)=>itemRow(cur,r,i)).join(''):'<p class="muted" style="margin:0">কিছু নেই। ＋ চেপে যোগ করুন।</p>'}</div>`;
+  <div class="card" id="lst">${rows.length?(rows.map((r,i)=>sec.filter&&!sec.filter(r)?'':itemRow(cur,r,i)).join('')||'<p class="muted" style="margin:0">এই ভাগে কেউ নেই। ＋ চেপে যোগ করুন।</p>'):'<p class="muted" style="margin:0">কিছু নেই। ＋ চেপে যোগ করুন।</p>'}</div>`;
+  if(sec.bind)sec.bind();
   if($('#q'))$('#q').oninput=e=>{const q=e.target.value.toLowerCase().trim();document.querySelectorAll('#lst [data-it]').forEach(el=>el.style.display=!q||el.dataset.s.includes(q)?'':'none')};
   document.querySelectorAll('[data-it]').forEach(el=>el.onclick=async e=>{
     const r=DATA[cur][+el.dataset.it];
+    if(e.target.classList.contains('rxv')){e.stopPropagation();viewImages(imgIds(r[e.target.dataset.k]),0);return}
     if(e.target.classList.contains('cp')){e.stopPropagation();if(await secretGate())copyText(r[e.target.dataset.k]);return}
     if(e.target.classList.contains('eye')){e.stopPropagation();const s=e.target.previousElementSibling;const on=s.dataset.on==='1';
       if(!on&&!(await secretGate()))return;
@@ -833,10 +967,11 @@ function listPage(cur){
 function itemRow(sec,r,i){
   const S=SEC[sec],a=S.amt?S.amt(r):null;
   const secrets=S.fields.filter(f=>(f.t==='secret'||f.t==='password')&&r[f.k]).map(f=>`<div><small>${esc(f.l)}: <span class="secret" data-k="${f.k}">${esc(f.t==='password'?'••••••••':mask(r[f.k]))}</span><button class="eye">দেখুন</button><button class="eye cp" data-k="${f.k}">📋</button></small></div>`).join('');
+  const pics=S.fields.filter(f=>f.t==='images'&&imgIds(r[f.k]).length).map(f=>`<div><small>📎 ${imgIds(r[f.k]).length}টি ছবি <button class="eye rxv" data-k="${f.k}">দেখুন</button></small></div>`).join('');
   const userCp=sec==='online'&&r.user?`<div><small>${esc(r.user)} <button class="eye cp" data-k="user">📋</button></small></div>`:'';
-  const srch=esc([S.title(r),S.sub(r),...S.fields.filter(f=>f.t!=='secret'&&f.t!=='password').map(f=>r[f.k])].filter(Boolean).join(' ').toLowerCase());
+  const srch=esc([S.title(r),S.sub(r),...S.fields.filter(f=>f.t!=='secret'&&f.t!=='password'&&f.t!=='images').map(f=>r[f.k])].filter(Boolean).join(' ').toLowerCase());
   const link=sec==='online'&&/^https?:\/\//.test(r.link||'')?`<div><small><a href="${esc(r.link)}" target="_blank" rel="noopener noreferrer">${esc(r.link)}</a></small></div>`:'';
-  return `<div class="row tap" data-it="${i}" data-s="${srch}"><div class="t"><div>${esc(S.title(r)||'—')}</div><small>${esc(S.sub(r)||'')}</small>${userCp}${secrets}${link}</div>${a!==null?`<div class="a ${a<0?'exp':''}" style="text-align:right">${tk(a)}${S.amtHint?`<br><small class="muted" style="font-weight:400">${S.amtHint}</small>`:''}</div>`:''}</div>`;
+  return `<div class="row tap" data-it="${i}" data-s="${srch}"><div class="t"><div>${esc(S.title(r)||'—')}</div><small>${esc(S.sub(r)||'')}</small>${userCp}${secrets}${pics}${link}</div>${a!==null?`<div class="a ${a<0?'exp':''}" style="text-align:right">${tk(a)}${S.amtHint?`<br><small class="muted" style="font-weight:400">${S.amtHint}</small>`:''}</div>`:''}</div>`;
 }
 
 /* ================= in-app date picker (no native dialog / keyboard needed) ================= */
@@ -884,12 +1019,15 @@ document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest
 
 /* ================= forms ================= */
 function openModal(html){$('#sheet').innerHTML=html;$('#modal').classList.remove('hidden')}
-function closeModal(){closeDP();$('#modal').classList.add('hidden');$('#sheet').innerHTML=''}
+function closeModal(){closeDP();TURLS.forEach(u=>URL.revokeObjectURL(u));TURLS=[];$('#modal').classList.add('hidden');$('#sheet').innerHTML=''}
 $('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};
 
 function fieldHtml(f,v){
   v=v??'';const id='f_'+f.k;
   if(f.t==='select')return `<label for="${id}">${esc(f.l)}</label><select id="${id}">${f.o.map(o=>`<option ${o==v?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+  if(f.t==='images')return `<label>${esc(f.l)}</label><div class="imgs" id="${id}" data-ids="${esc(imgIds(v).join(','))}"></div>
+    <div style="display:flex;gap:8px;margin-top:8px"><button type="button" class="btn ghost" style="flex:1" data-cam="${id}">📷 ক্যামেরা</button><button type="button" class="btn ghost" style="flex:1" data-pick="${id}">🖼️ গ্যালারি / ফাইল</button></div>
+    <input type="file" accept="image/*" multiple class="hidden" data-file="${id}"><input type="file" accept="image/*" capture="environment" class="hidden" data-camfile="${id}">`;
   if(f.t==='password')return `<label for="${id}">${esc(f.l)}</label><div style="display:flex;gap:6px"><div class="pwwrap" style="flex:1"><input id="${id}" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" value="${esc(v)}"><button type="button" class="peek" data-peek="${id}" aria-label="দেখুন">👁</button></div><button type="button" class="btn ghost" data-gen="${id}" title="শক্ত পাসওয়ার্ড বানান" style="padding:8px 12px">🎲</button></div>`;
   if(f.t==='for'){const o=['সংসার','নিজ',...people()];if(v&&!o.includes(v))o.push(v);return `<label for="${id}">${esc(f.l)}</label><select id="${id}">${o.map(x=>`<option ${x==v?'selected':''}>${esc(x)}</option>`).join('')}</select>`}
   if(f.t==='person'){const o=['নিজ',...people()];if(v&&!o.includes(v))o.push(v);return `<label for="${id}">${f.l}</label><select id="${id}">${o.map(x=>`<option ${x==v?'selected':''}>${esc(x)}</option>`).join('')}</select>`}
@@ -898,19 +1036,20 @@ function fieldHtml(f,v){
   return `<label for="${id}">${esc(f.l)}</label><input id="${id}" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(v)}">`;
 }
 function editItem(sec,idx,pre){
-  const S=SEC[sec],r=idx==null?{}:DATA[sec][idx];
-  openModal(`<h3>${idx==null?'নতুন':'সম্পাদনা'} — ${esc(mName(sec))}</h3><form id="ef">${S.fields.map(f=>fieldHtml(f,r[f.k])).join('')}
+  const S=SEC[sec],r=idx==null?(S.defaults?S.defaults():{}):DATA[sec][idx];
+  openModal(`<h3>${idx==null?'নতুন':'সম্পাদনা'} — ${esc(mName(sec))}</h3><form id="ef">${S.fields.map(f=>`<div data-fk="${f.k}"${f.only?` data-only="${esc(f.only.join('|'))}"`:''}>${fieldHtml(f,r[f.k])}</div>`).join('')}
   <div class="acts">${idx!=null?'<button type="button" class="btn danger" id="del">মুছুন</button>':''}<button type="button" class="btn ghost" id="cx">বাতিল</button><button class="btn">সংরক্ষণ</button></div></form>`);
-  $('#cx').onclick=()=>{if(pre)DATA[sec].splice(idx,1);closeModal()};bindPeek();
+  $('#cx').onclick=()=>{if(pre)DATA[sec].splice(idx,1);closeModal();gcImages()};bindPeek();bindImgFields();
+  const relSel=$('#f_rel');if(relSel&&document.querySelector('#ef [data-only]')){const upd=()=>document.querySelectorAll('#ef [data-only]').forEach(d=>d.style.display=d.dataset.only.split('|').includes(relSel.value)?'':'none');relSel.addEventListener('change',upd);upd()}
   document.querySelectorAll('[data-money]').forEach(i=>i.addEventListener('input',()=>{const h=document.querySelector(`[data-mv="${i.id}"]`);if(h)h.textContent=i.value.trim()?'= '+tk(num(i.value)):''}));
   document.querySelectorAll('[data-gen]').forEach(b=>b.onclick=()=>{const i=document.getElementById(b.dataset.gen);i.value=genPass();i.type='text';toast('শক্ত পাসওয়ার্ড বানানো হয়েছে')});
   if($('#del'))$('#del').onclick=async()=>{const extra=sec==='funds'&&fundTx(r.id).length?' এর সব জমার এন্ট্রিও মুছে যাবে।':sec==='recurring'?' (আগে যোগ হওয়া লেনদেনগুলো থাকবে)':'';
-    if(!confirm('মুছে ফেলবেন?'+extra))return;if(sec==='funds'){DATA.tx.filter(t=>t.fund===r.id).forEach(undoTx);DATA.tx=DATA.tx.filter(t=>t.fund!==r.id)}DATA[sec].splice(idx,1);await save();closeModal();go(PAGE)};
+    if(!confirm('মুছে ফেলবেন?'+extra))return;if(sec==='funds'){DATA.tx.filter(t=>t.fund===r.id).forEach(undoTx);DATA.tx=DATA.tx.filter(t=>t.fund!==r.id)}DATA[sec].splice(idx,1);await save();closeModal();go(PAGE);gcImages()};
   $('#ef').onsubmit=async e=>{e.preventDefault();const o=Object.assign({},r);
-    S.fields.forEach(f=>{const raw=$('#f_'+f.k).value,v=f.t==='password'?raw:raw.trim();o[f.k]=f.t==='money'?(v===''?'':num(v)):v});if(!o.id)o.id=uid();
+    S.fields.forEach(f=>{if(f.t==='images'){o[f.k]=($('#f_'+f.k).dataset.ids||'').split(',').filter(Boolean);return}const raw=$('#f_'+f.k).value,v=f.t==='password'?raw:raw.trim();o[f.k]=f.t==='money'?(v===''?'':num(v)):v});if(!o.id)o.id=uid();
     if(!S.title(o)||S.title(o)==='—'){toast('প্রথম ঘরটি পূরণ করুন');return}
     if(sec==='property'&&!propVal(o)&&!confirm('মূল্য দেওয়া হয়নি — নিট সম্পদে ৳0 যোগ হবে। তবুও সংরক্ষণ করবেন?'))return;
-    if(idx==null)DATA[sec].push(o);else DATA[sec][idx]=o;await save();closeModal();go(PAGE);toast('সংরক্ষিত')};
+    if(idx==null)DATA[sec].push(o);else DATA[sec][idx]=o;await save();closeModal();go(PAGE);toast('সংরক্ষিত');gcImages()};
 }
 function recentCats(type){
   const c={};DATA.tx.filter(t=>t.type===type).forEach(t=>c[t.cat]=(c[t.cat]||0)+1);
@@ -974,10 +1113,10 @@ function settings(){
   ['#zr','#zl','#lm'].forEach(s=>$(s).onchange=upd);$('#zp').onchange=upd;
   $('#impX').onclick=()=>openPicker('#fileX');$('#fileX').onchange=e=>{PICKING=0;lastAct=Date.now();importExcel(e.target.files[0])};
   $('#expX').onclick=exportExcel;
-  $('#expB').onclick=async()=>{await download(new Blob([JSON.stringify(await sealWith(KEY,SALT,DATA))],{type:'application/json'}),'RoniHisab-backup-'+today()+(NATIVE?'.json':'.rhb'))};
+  $('#expB').onclick=async()=>{toast('ব্যাকআপ তৈরি হচ্ছে…');await download(new Blob([await backupJSON()],{type:'application/json'}),'RoniHisab-backup-'+today()+(NATIVE?'.json':'.rhb'))};
   $('#impB').onclick=()=>openPicker('#fileB');$('#fileB').onchange=e=>{PICKING=0;lastAct=Date.now();importBackup(e.target.files[0])};
   $('#chpw').onclick=changePw;$('#gomenu').onclick=()=>go('menuedit');
-  $('#wipe').onclick=async()=>{if(prompt('সব ডেটা মুছতে লিখুন: DELETE')==='DELETE'){await bioDisable();localStorage.removeItem(VKEY);setFails(0);showLock(true)}};
+  $('#wipe').onclick=async()=>{if(prompt('সব ডেটা মুছতে লিখুন: DELETE')==='DELETE'){await bioDisable();try{await IDB.clear()}catch(e){}localStorage.removeItem(VKEY);setFails(0);showLock(true)}};
   bioSettings();
 }
 async function bioSettings(){
@@ -1021,7 +1160,7 @@ function changePw(){
     if($('#p1').value.length<8){er.textContent='কমপক্ষে ৮ অক্ষর';return}
     if(pwScore($('#p1').value)<2){er.textContent='পাসওয়ার্ড খুব দুর্বল';return}
     if($('#p1').value!==$('#p2').value){er.textContent='মিলছে না';return}
-    SALT=crypto.getRandomValues(new Uint8Array(16));KEY=await deriveKey($('#p1').value,SALT);await save();
+    const oldK=KEY;SALT=crypto.getRandomValues(new Uint8Array(16));KEY=await deriveKey($('#p1').value,SALT);await reencImages(oldK,KEY);await save();
     if(bioOn()){try{await BIO().setCredentials({username:'roni-hisab',password:$('#p1').value,server:BIO_SERVER})}catch(x){await bioDisable()}}
     closeModal();toast('পাসওয়ার্ড পরিবর্তন হয়েছে — নতুন ব্যাকআপ নিন')};
 }
@@ -1039,7 +1178,9 @@ async function importBackup(file){
     let r;try{r=await openWith($('#rbp').value,blob)}catch(x){bt.disabled=false;bt.textContent='ফেরত আনুন';er.textContent='পাসওয়ার্ড ভুল — যে ডিভাইসে ব্যাকআপ বানিয়েছিলেন সেখানকার পাসওয়ার্ড দিন';return}
     const d=r.data||{},cnt=(d.tx||[]).length,cb=(d.banks||[]).length+(d.savings||[]).length+(d.property||[]).length;
     if(!confirm(`ব্যাকআপে ${cnt}টি লেনদেন ও ${cb}টি সম্পদ আছে।\n\nএই ফোনের বর্তমান সব ডেটা ব্যাকআপ দিয়ে বদলে যাবে। চালিয়ে যাবেন?`)){bt.disabled=false;bt.textContent='ফেরত আনুন';return}
-    DATA=Object.assign(blank(),d);DATA.settings=Object.assign(blank().settings,d.settings||{});initMenu();ensureIds();await save();closeModal();toast('ফেরত আনা হয়েছে ✓');go('home')};
+    const pics=d.__img||{};delete d.__img;
+    try{await IDB.clear();for(const[id,b]of Object.entries(pics))await imgPutId(id,unb64(b))}catch(x){toast('ছবিগুলো ফেরত আনা যায়নি')}
+    DATA=Object.assign(blank(),d);DATA.settings=Object.assign(blank().settings,d.settings||{});migrateFamily();initMenu();ensureIds();await save();closeModal();toast('ফেরত আনা হয়েছে ✓'+(Object.keys(pics).length?' ('+Object.keys(pics).length+'টি ছবি সহ)':''));HIST=[];go('home',true)};
 }
 
 /* ---- Excel import/export (matches Roni_Personal_Data.xlsx) ---- */
@@ -1053,7 +1194,7 @@ const XMAP={
  funds:{sh:'সমিতি ও ফান্ড',cols:['name','org','opening','monthly','day','start','profit','status','note','id'],need:'name'},
  recurring:{sh:'নিয়মিত আয়-ব্যয়',cols:['name','type','amount','cat','day','for','status','note','id'],need:'name'},
 };
-['property','children','parents','meds','checkups'].forEach(k=>XMAP[k]={sh:SEC[k].name,cols:SEC[k].fields.map(f=>f.k),need:k==='meds'?'med':SEC[k].fields[0].k});
+['property','family','children','parents','meds','checkups'].forEach(k=>XMAP[k]={sh:SEC[k].name,cols:SEC[k].fields.filter(f=>f.t!=='images').map(f=>f.k),need:k==='meds'?'med':SEC[k].fields[0].k});
 const MONEY=new Set(['bal','limit','value','total','paid','emi','given','returned','pprice','rent','fee','allow','cost','opening','monthly','profit','amount']);
 const DATEK=new Set(['start','end','date','dob','pdate','until','next']);
 function cellVal(k,v,t){
@@ -1070,13 +1211,15 @@ async function importExcel(file){
     const got={};let n=0;
     for(const[sec,m]of Object.entries(XMAP)){const ws=wb.Sheets[m.sh];if(!ws)continue;
       got[sec]=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''}).slice(1).map(row=>{const o={};m.cols.forEach((k,i)=>{if(k)o[k]=cellVal(k,row[i],SEC[sec]&&SEC[sec].custom?(SEC[sec].fields.find(f=>f.k===k)||{}).t:undefined)});return o}).filter(o=>o[m.need]);
+      const imgF=SEC[sec]?SEC[sec].fields.filter(f=>f.t==='images'):[];
+      if(imgF.length){const key=o=>m.cols.slice(0,5).map(k=>o[k]).join('|'),old={};(DATA[sec]||[]).forEach(o=>old[key(o)]=o);got[sec].forEach(o=>{const q=old[key(o)];if(q)imgF.forEach(f=>{if(q[f.k])o[f.k]=q[f.k]})})}
       if(sec==='savings')got[sec].forEach(o=>{if(o.rate!==''){o.rate=num(o.rate);if(o.rate>0&&o.rate<1)o.rate=+(o.rate*100).toFixed(3)}if(!o.status)o.status='চলমান'});
       n+=got[sec].length}
     const tws=wb.Sheets['আয়-ব্যয়'];if(!Object.keys(wb.Sheets).length)throw new Error('ফাইলটি Excel নয়');
     if(tws){got.tx=XLSX.utils.sheet_to_json(tws,{header:1,raw:true,defval:''}).slice(1).filter(r=>num(r[5])>0).map(r=>({id:uid(),date:cellVal('date',r[0])||today(),type:String(r[2]).trim()==='আয়'?'আয়':'ব্যয়',cat:String(r[3]).trim()||'অন্যান্য',note:String(r[4]).trim(),amount:num(r[5]),for:String(r[6]??'').trim(),...(r[7]?{fund:String(r[7])}:{}),...(r[8]?{rid:String(r[8])}:{})}));n+=got.tx.length}
     if(!n){alert('এই ফাইলে চেনা শিট পাওয়া যায়নি। Roni_Personal_Data.xlsx ফাইলটি দিন।');return}
     if(!confirm(`${n}টি এন্ট্রি পাওয়া গেছে। এই অংশগুলোর বর্তমান ডেটা Excel দিয়ে বদলে যাবে। চালিয়ে যাবেন?`))return;
-    Object.assign(DATA,got);initMenu();ensureIds();await save();toast('Excel থেকে আনা হয়েছে');go('home');
+    Object.assign(DATA,got);migrateFamily();initMenu();ensureIds();await save();toast('Excel থেকে আনা হয়েছে');go('home');
   }catch(e){alert('Excel পড়া যায়নি: '+e.message)}
   finally{const f=$('#fileX');if(f)f.value=''}
 }
@@ -1088,6 +1231,7 @@ function exportExcel(){
     ['এ মাস — '+monthLabel(ymNow())],['আয়',mS.i],['খরচ',mS.e],['সমিতি / ফান্ডে জমা',mS.f-mS.fw],['হাতে বাকি',mS.i-mS.e-mS.f+mS.fw],[],['এ বছর — '+ymNow().slice(0,4)],['আয়',yS.i],['খরচ',yS.e],['সমিতি / ফান্ডে জমা',yS.f-yS.fw],['হাতে বাকি',yS.left],[],['প্রদেয় জাকাত',T.zakat]]),'ড্যাশবোর্ড');
   const rem={loans:r=>num(r.total)-num(r.paid),recv:r=>num(r.given)-num(r.returned)};
   for(const[sec,m]of Object.entries(XMAP)){
+    if(SEC[sec]&&SEC[sec].hidden)continue;
     const lab=k=>k?(SEC[sec].fields.find(f=>f.k===k)||{l:k}).l:'বাকি (অটো)';
     const rows=(DATA[sec]||[]).map(r=>m.cols.map(k=>k?(sec==='savings'&&k==='rate'&&r.rate!==''?num(r.rate)/100:(r[k]??'')):rem[sec](r)));
     XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([m.cols.map(lab),...rows]),m.sh);
